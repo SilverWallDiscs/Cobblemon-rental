@@ -1,4 +1,4 @@
-# Pokémon Rental (Fabric 1.21.1) — source prototype v0.1.3
+# Pokémon Rental (Fabric 1.21.1) — source prototype v0.1.4
 
 A **server-only** Cobblemon 1.7.3 Pokémon rental marketplace using **CobbleDollars 2.0 Beta 6.1**. Clients need their normal Cobblemon client but do not need this addon.
 
@@ -21,7 +21,7 @@ A **server-only** Cobblemon 1.7.3 Pokémon rental marketplace using **CobbleDoll
 
 - Java 21, Gradle 8.12.1 (install separately; Gradle Wrapper JAR is not bundled; CI installs Gradle 8.12.1).
 - Minecraft Fabric 1.21.1, Fabric API, Fabric Loader, Cobblemon **1.7.3** and CobbleDollars **2.0.0 Beta-6.1**.
-- `gradle build` (source uses Fabric Loom and Mojang official mappings, no client code). Output should be `build/libs/pokemon-rental-0.1.3.jar` after a successful build.
+- `gradle build` (source uses Fabric Loom and Mojang official mappings, no client code). Output should be `build/libs/pokemon-rental-0.1.4.jar` after a successful build.
 - Install the compiled JAR only in the server's `mods/` folder.
 
 
@@ -59,7 +59,7 @@ All 54 GUI slots remain **server-owned and non-extractable**; clicks are interce
 2. **Cross-account/offline transfer hardening:** `tradeable = false` prevents normal trades, but external GTS, commands, breeding, custom pasture implementations, and other mods may transfer, clone or transform rented Pokémon. To guarantee no duplication, add Cobblemon storage hooks/mixins and a comprehensive ownership audit, including *every* party and PC and unloaded tethered entities, before claiming absolute safety. The current online sweep alone is insufficient.
 3. **Crash-consistent transaction integration:** direct BigInteger set/get is *not* a multi-resource ACID transaction. REVIEW/PENDING statuses must be manually reconciled with CobbleDollars ledger/account balance and escrow before re-enabling payments. Also handle interrupted payouts with admin tools and log audit details.
 4. **World durability:** force-save Cobblemon party/PC writes and integrate with its storage factory save lifecycle; test crash after every persisted transition. Test the atomic-rename filesystem behavior and backups.
-5. **Battle/item/pasture edge cases:** test an expiry during combat, Pokémon sent out or riding, owner/renter offline, holding an item added by the renter, external inventory transactions, and PC full. Decide whether/where to return rental-period held items. Currently the snapshot guarantees preservation only of the **owner's** original held item. Any new items attached to the temporary copy at expiry may be lost.
+5. **Battle/item/pasture edge cases:** test an expiry during combat, Pokémon sent out or riding, owner/renter offline, holding an item added by the renter, external inventory transactions, and PC full. Decide whether/where to return rental-period held items. Currently the snapshot guarantees preservation only of the **owner's** original held item. Renter-equipped held and cosmetic items found in the party/PC at expiry are now escrowed for recovery. Items in external storage plugins or unloaded entities are not guaranteed to be collected; test custom pasture implementations carefully.
 6. **Permissions and policy:** configure listing limits, prices, tax, blacklists (e.g. legendaries), cooldowns, abuse monitoring, admin repair commands, multiple languages and UX improvements.
 
 ### Operator warnings
@@ -86,8 +86,19 @@ Fabric Loom **1.10.5** requires **Gradle 8.12+**. An earlier source prototype in
 
 ### Initial private-server test checklist
 
-1. Start Fabric 1.21.1 with Fabric API, Cobblemon 1.7.3, CobbleDollars 2.0 Beta 6.1 and `pokemon-rental-0.1.3.jar` on the **server only**.
+1. Start Fabric 1.21.1 with Fabric API, Cobblemon 1.7.3, CobbleDollars 2.0 Beta 6.1 and `pokemon-rental-0.1.4.jar` on the **server only**.
 2. Back up world data. With two test accounts, list a Pokémon carrying a held item using `/pokerental 1`, verify the original disappears from the owner's party, and verify the marketplace GUI.
 3. Rent it with the second account; verify one CobbleDollars debit, a temporary Pokémon with no held item, and the owner payout claim. Test relogging and both party/PC placement.
 4. Test after the 2-hour minimum rental and server restarts; check that the rental copy is removed and the untouched original can be reclaimed with its original held item.
 5. Repeat with PC, pasture and offline players. Record any duplication, stale entity, or vanished held-item behavior. **Never run this prototype on a public server economy.**
+
+## Renter equipment recovery (v0.1.4)
+
+If the renter equips a **held item** (e.g. Everstone or Destiny Knot) or a **cosmetic item** on a temporarily rented Pokémon, the addon attempts to capture it when the lease expires. The *owner's* original Pokémon and its original held/cosmetic items remain unchanged in the separate `originals` vault.
+
+- The expiry handler reads Cobblemon's party/PC stores (including the offline renter), serializes any equipped items into `world/pokemon-rental/renter-items/<rental-id>.json` **before removing the rental Pokémon**, and retains the original rental audit record.
+- The renter uses **`/pokerental recover`**, **Marketplace → Recover Items**, or **My Rentals → Recover Items**, which opens a paginated GUI showing only **unclaimed** item escrows. There is no completed-rental history page.
+- Clicking the item opens a preview of held/cosmetic items. Click **Claim equipped items** to receive them in your player inventory. Free one empty main-inventory slot for each item (maximum two).
+- Claim is guarded by a persistent *write-ahead pending* flag. If the server crashes or inventory mutation fails during delivery, the claim is locked for **admin reconciliation** rather than potentially duplicating the item. Do not reset `renterItemClaimPending` blindly.
+- Copies in unknown storage systems, out-of-band trades or unloaded pasture entities may escape the scan; this is **not a universal anti-duplication guarantee**. Test any other mods that can transfer Pokémon and use world backups.
+- Older expired rentals from v0.1.3 cannot retroactively restore equipment that was already discarded.

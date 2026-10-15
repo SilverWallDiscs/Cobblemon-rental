@@ -22,6 +22,9 @@ public final class RentalListing {
     public boolean payoutClaimed;
     public boolean payoutReview;
     public boolean originalReturned;
+    /** Durable write-ahead claim marker. Pending requires admin reconciliation. */
+    public boolean renterItemClaimPending;
+    public boolean renterItemsClaimed;
 
     public boolean available() { return state == State.LISTED; }
     public boolean active() { return state == State.ACTIVE && System.currentTimeMillis() < expiresAt; }

@@ -30,6 +30,12 @@ public final class RentalEngine {
     public List<RentalListing> marketplace() { return db.all().stream().filter(RentalListing::available).sorted(Comparator.comparing(x -> x.id)).collect(Collectors.toList()); }
     public List<RentalListing> byOwner(UUID id) { return db.all().stream().filter(x -> x.ownerId.equals(id) && (!x.originalReturned || (x.renterId != null && !x.payoutClaimed))).sorted(Comparator.comparing((RentalListing x) -> x.id).reversed()).collect(Collectors.toList()); }
     public List<RentalListing> byRenter(UUID id) { return db.all().stream().filter(x -> id.equals(x.renterId) && x.active()).collect(Collectors.toList()); }
+    /** Finished rentals remain hidden; only unclaimed item deposits appear in the recovery vault. */
+    public List<RentalListing> recoverableItems(UUID user) {
+        return db.all().stream().filter(r -> user.equals(r.renterId) && !r.renterItemsClaimed &&
+            (r.state == RentalListing.State.EXPIRED || r.state == RentalListing.State.RETURNED) &&
+            db.hasRenterItems(r)).sorted(Comparator.comparing((RentalListing r) -> r.expiresAt).reversed()).toList();
+    }
     public boolean isRentalPokemon(Pokemon p) { return db.wasRental(p.getUuid()); }
     /** Reject expired rental entities if chunks load AFTER their lease was cleaned up. */
     public boolean shouldDiscardTemporaryEntity(UUID pokemonId) {
@@ -143,17 +149,89 @@ public final class RentalEngine {
         while ((p = party.get(pokemonId)) != null) { p.recall(); if (!party.remove(p)) break; }
         while ((p = pc.get(pokemonId)) != null) { p.recall(); if (!pc.remove(p)) break; }
     }
-    /** May be called only after expiry. Scans offline renter stores and online users (including PC and pasture-backed PC entries). */
+    /** Reads the copy's last equipped held/cosmetic items before removing it.
+     * An existing escrow is authoritative if a crash occurred midway through expiry.
+     * If divergent items are detected we stop and require admin reconciliation.
+     */
+    private void cleanupRentalWithItemEscrow(RentalListing r) throws IOException {
+        if (r.renterId == null || r.temporaryPokemonId == null) throw new IOException("Missing rental ownership metadata");
+        Set<UUID> players = new HashSet<>();
+        players.add(r.renterId);
+        for (ServerPlayer p : server.getPlayerList().getPlayers()) players.add(p.getUUID());
+
+        RentalRepository.RenterItems candidate = null;
+        for (UUID user : players) {
+            PlayerPartyStore party = Cobblemon.INSTANCE.getStorage().getParty(user, registry());
+            PCStore pc = Cobblemon.INSTANCE.getStorage().getPC(user, registry());
+            for (Pokemon pokemon : new Pokemon[]{party.get(r.temporaryPokemonId), pc.get(r.temporaryPokemonId)}) {
+                if (pokemon == null) continue;
+                RentalRepository.RenterItems equipped = new RentalRepository.RenterItems(pokemon.heldItem(), pokemon.cosmeticItem());
+                if (equipped.empty()) continue;
+                if (candidate != null && !RentalRepository.sameItems(candidate,equipped))
+                    throw new IOException("Conflicting items on copies of rental " + r.id);
+                candidate = equipped;
+            }
+        }
+        // Never replace an earlier write-ahead snapshot with a later empty/different item state.
+        if (db.hasRenterItems(r)) {
+            var saved=db.readRenterItems(r,registry());
+            if (candidate != null && !RentalRepository.sameItems(saved,candidate))
+                throw new IOException("Escrow differs from still-equipped copy for rental " + r.id);
+        } else if (candidate != null) {
+            // Items must be safe on disk before the temporary Pokémon is removed.
+            db.storeRenterItems(r,candidate,registry());
+        }
+        for (UUID user : players) {
+            strip(user,r.temporaryPokemonId);
+            if (hasPokemon(user,r.temporaryPokemonId)) throw new IOException("Unable to remove rental copy from storage " + user);
+        }
+    }
+    /** Offline PC/party are scanned too; pasture or external trade plugins still need integration testing. */
     public boolean expire(RentalListing r) {
         if (r.state != RentalListing.State.ACTIVE || System.currentTimeMillis() < r.expiresAt) return false;
         try {
-            strip(r.renterId, r.temporaryPokemonId);
-            for (ServerPlayer p : server.getPlayerList().getPlayers()) strip(p.getUUID(), r.temporaryPokemonId);
+            cleanupRentalWithItemEscrow(r);
             r.state = RentalListing.State.EXPIRED; db.save();
             ServerPlayer owner = server.getPlayerList().getPlayer(r.ownerId);
             if (owner != null) msg(owner, r.species + " rental ended. Claim your original in /pokerental.");
+            ServerPlayer renter = server.getPlayerList().getPlayer(r.renterId);
+            if (renter != null && db.hasRenterItems(r))
+                msg(renter, "Your rental ended. Recover equipped items from /pokerental -> Recover Items.");
             return true;
         } catch (Exception e) { warn("expiry:" + r.id, e); return false; }
+    }
+    /** Give saved items only to the renter, and only once. Crash-ambiguous delivery stays locked. */
+    public boolean claimRenterItems(ServerPlayer renter, String id) {
+        RentalListing r=db.find(id);
+        if (r == null || r.renterId == null || !r.renterId.equals(renter.getUUID()) ||
+            r.renterItemsClaimed || r.renterItemClaimPending ||
+            (r.state != RentalListing.State.EXPIRED && r.state != RentalListing.State.RETURNED) ||
+            !db.hasRenterItems(r)) return false;
+        try {
+            var items=db.readRenterItems(r,registry());
+            int available=0;
+            // Conservative: reserve one *empty main inventory slot* per escrow item.
+            for (int i=0;i<36;i++) if (renter.getInventory().getItem(i).isEmpty()) available++;
+            if (available < items.neededSlots()) {
+                msg(renter,"Please make " + items.neededSlots() + " empty inventory slot(s) before claiming.");
+                return false;
+            }
+            r.renterItemClaimPending=true; db.save(); // Durable no-retry marker BEFORE mutation.
+            boolean success=true;
+            if (!items.held().isEmpty()) success=renter.getInventory().add(items.held().copy());
+            if (success && !items.cosmetic().isEmpty()) success=renter.getInventory().add(items.cosmetic().copy());
+            if (!success) throw new IOException("Inventory add was not confirmed");
+            r.renterItemsClaimed=true; db.save();
+            msg(renter,"Rental equipment successfully returned to your inventory.");
+            return true;
+        } catch (Exception e) {
+            warn("item-claim:" + id,e);
+            msg(renter,"Item recovery paused for admin review. Do not retry; escrow is preserved.");
+            return false;
+        }
+    }
+    public RentalRepository.RenterItems previewRenterItems(RentalListing r) throws IOException {
+        return db.readRenterItems(r,registry());
     }
     public void tick() {
         for (RentalListing r : List.copyOf(db.all())) {
@@ -189,10 +267,7 @@ public final class RentalEngine {
         if (r.state != RentalListing.State.EXPIRED && r.state != RentalListing.State.LISTED) return false;
         if (!hasSpace(owner.getUUID())) { msg(owner, "Make room in your party or PC first."); return false; }
         try {
-            if (r.temporaryPokemonId != null) {
-                strip(r.renterId, r.temporaryPokemonId);
-                for (ServerPlayer p : server.getPlayerList().getPlayers()) strip(p.getUUID(), r.temporaryPokemonId);
-            }
+            if (r.temporaryPokemonId != null) cleanupRentalWithItemEscrow(r);
             if (!hasPokemon(owner.getUUID(), r.originalPokemonId)) {
                 Pokemon original = db.original(r, registry());
                 if (!original.getUuid().equals(r.originalPokemonId)) throw new IllegalStateException("Escrow UUID mismatch");

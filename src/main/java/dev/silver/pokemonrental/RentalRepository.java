@@ -2,6 +2,8 @@ package dev.silver.pokemonrental;
 
 import com.google.gson.*;
 import com.cobblemon.mod.common.pokemon.Pokemon;
+import com.mojang.serialization.JsonOps;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.core.RegistryAccess;
 import java.io.*;
 import java.nio.charset.StandardCharsets;
@@ -16,14 +18,16 @@ public final class RentalRepository {
         HashSet<UUID> usedCopyIds = new HashSet<>();
     }
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
-    private final Path root, vault, index;
+    private final Path root, vault, itemVault, index;
     private StateData data;
 
     public RentalRepository(Path worldRoot) throws IOException {
         root = worldRoot.resolve("pokemon-rental");
         vault = root.resolve("originals");
+        itemVault = root.resolve("renter-items");
         index = root.resolve("index.json");
         Files.createDirectories(vault);
+        Files.createDirectories(itemVault);
         if (Files.exists(index)) {
             try (Reader reader = Files.newBufferedReader(index, StandardCharsets.UTF_8)) {
                 data = GSON.fromJson(reader, StateData.class);
@@ -64,6 +68,56 @@ public final class RentalRepository {
         copy.setUuid(record.temporaryPokemonId);
         copy.setTradeable(false);
         return copy;
+    }
+    /** Return renter-equipped items separately from the owner's original escrow.
+     * The file is write-once: retrying an expiry cannot mint a second item claim.
+     */
+    public record RenterItems(ItemStack held, ItemStack cosmetic) {
+        public boolean empty() { return held.isEmpty() && cosmetic.isEmpty(); }
+        public int neededSlots() { return (held.isEmpty()?0:1) + (cosmetic.isEmpty()?0:1); }
+    }
+    private Path itemPath(RentalListing r) { return itemVault.resolve(r.id + ".json"); }
+    public boolean hasRenterItems(RentalListing r) { return Files.exists(itemPath(r)); }
+    private static boolean sameItem(ItemStack a, ItemStack b) {
+        return (a.isEmpty() && b.isEmpty()) ||
+            (!a.isEmpty() && !b.isEmpty() && a.getCount() == b.getCount() && ItemStack.isSameItemSameComponents(a,b));
+    }
+    public static boolean sameItems(RenterItems a, RenterItems b) {
+        return sameItem(a.held, b.held) && sameItem(a.cosmetic, b.cosmetic);
+    }
+    public RenterItems readRenterItems(RentalListing r, RegistryAccess registries) throws IOException {
+        JsonObject j;
+        try (Reader reader=Files.newBufferedReader(itemPath(r),StandardCharsets.UTF_8)) {
+            j=JsonParser.parseReader(reader).getAsJsonObject();
+        }
+        if (!r.renterId.toString().equals(j.get("renterId").getAsString()) ||
+            !r.temporaryPokemonId.toString().equals(j.get("temporaryPokemonId").getAsString()))
+            throw new IOException("Renter item escrow ownership mismatch: " + r.id);
+        try {
+            var context=registries.createSerializationContext(JsonOps.INSTANCE);
+            ItemStack held=j.has("held") ? ItemStack.CODEC.parse(context,j.get("held")).getOrThrow() : ItemStack.EMPTY;
+            ItemStack cosmetic=j.has("cosmetic") ? ItemStack.CODEC.parse(context,j.get("cosmetic")).getOrThrow() : ItemStack.EMPTY;
+            if (held.isEmpty() && cosmetic.isEmpty()) throw new IOException("Empty renter-item escrow: " + r.id);
+            return new RenterItems(held,cosmetic);
+        } catch(RuntimeException e) { throw new IOException("Corrupt renter item escrow: " + r.id,e); }
+    }
+    /** Persist before removing any copy. Existing escrow may only be reused if matching. */
+    public void storeRenterItems(RentalListing r, RenterItems items, RegistryAccess registries) throws IOException {
+        if (items.empty()) return;
+        if (hasRenterItems(r)) {
+            if (!sameItems(readRenterItems(r,registries),items))
+                throw new IOException("Conflicting rental item escrow: " + r.id + " — needs admin review");
+            return;
+        }
+        JsonObject j=new JsonObject();
+        j.addProperty("renterId",r.renterId.toString());
+        j.addProperty("temporaryPokemonId",r.temporaryPokemonId.toString());
+        var context=registries.createSerializationContext(JsonOps.INSTANCE);
+        try {
+            if (!items.held.isEmpty()) j.add("held",ItemStack.CODEC.encodeStart(context,items.held).getOrThrow());
+            if (!items.cosmetic.isEmpty()) j.add("cosmetic",ItemStack.CODEC.encodeStart(context,items.cosmetic).getOrThrow());
+        } catch(RuntimeException e) { throw new IOException("Cannot serialize rental item: " + r.id,e); }
+        writeAtomically(itemPath(r),j.toString());
     }
     public void save() {
         try { writeAtomically(index, GSON.toJson(data)); }

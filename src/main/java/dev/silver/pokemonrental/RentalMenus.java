@@ -28,6 +28,7 @@ public final class RentalMenus {
     public static void setup(ServerPlayer p, RentalEngine e, int slot) { new Session(p,e).setup(slot); }
     public static void owned(ServerPlayer p, RentalEngine e, int page) { new Session(p,e).owned(page); }
     public static void rented(ServerPlayer p, RentalEngine e, int page) { new Session(p,e).rented(page); }
+    public static void recover(ServerPlayer p, RentalEngine e, int page) { new Session(p,e).recover(page); }
 
     private static final class LockedMenu extends AbstractContainerMenu {
         final SimpleContainer content = new SimpleContainer(54);
@@ -177,6 +178,7 @@ public final class RentalMenus {
                 else if(clicked==45) market(currentPage-1);
                 else if(clicked==48) rented(0);
                 else if(clicked==49) owned(0);
+                else if(clicked==50) recover(0);
                 else if(clicked==53) market(currentPage+1);
             });
             for(int i=0;i<45;i++) { int at=i+currentPage*45; if(at>=listings.size()) break;
@@ -184,6 +186,7 @@ public final class RentalMenus {
             show(45,Items.ARROW,"§ePrevious page");
             show(48,Items.CLOCK,"§bMy active rentals");
             show(49,Items.CHEST,"§6My listings & earnings");
+            show(50,Items.BUNDLE,"§aRecover rented Pokémon items", "§7Claim equipment after a rental expires");
             show(53,Items.ARROW,"§eNext page");
             menu.sync();
         }
@@ -238,11 +241,60 @@ public final class RentalMenus {
             open("My rentals "+(currentPage+1)+"/"+(max+1),clicked -> {
                 if(clicked==45) rented(currentPage-1);
                 else if(clicked==49) market(0);
+                else if(clicked==50) recover(0);
                 else if(clicked==53) rented(currentPage+1);
             });
             for(int i=0;i<45;i++) { int at=i+currentPage*45; if(at>=l.size()) break;
                 RentalListing r=l.get(at); menu.put(i,listingIcon(r)); }
-            show(45,Items.ARROW,"§7Previous page"); show(49,Items.COMPASS,"§aMarketplace"); show(53,Items.ARROW,"§7Next page");
+            show(45,Items.ARROW,"§7Previous page"); show(49,Items.COMPASS,"§aMarketplace");
+            show(50,Items.BUNDLE,"§aRecover Items", "§7Return equipped items from expired rentals");
+            show(53,Items.ARROW,"§7Next page");
+            menu.sync();
+        }
+        void recover(int page) {
+            List<RentalListing> l=engine.recoverableItems(player.getUUID());
+            int max=Math.max(0,(l.size()-1)/45); currentPage=Math.max(0,Math.min(page,max));
+            open("Recover Items",clicked -> {
+                if(clicked<45) { int at=currentPage*45+clicked; if(at<l.size()) recoverDetail(l.get(at).id); }
+                else if(clicked==45) recover(currentPage-1);
+                else if(clicked==49) rented(0);
+                else if(clicked==53) recover(currentPage+1);
+            });
+            for(int i=0;i<45;i++) {
+                int at=i+currentPage*45; if(at>=l.size()) break;
+                RentalListing r=l.get(at);
+                try {
+                    var items=engine.previewRenterItems(r);
+                    ItemStack display = items.held().isEmpty() ? items.cosmetic().copy() : items.held().copy();
+                    display.set(DataComponents.CUSTOM_NAME,Component.literal("§eRecover items from " + r.species));
+                    display.set(DataComponents.LORE,new ItemLore(List.of(
+                        Component.literal("§7Held item: §f"+(items.held().isEmpty()?"None":items.held().getHoverName().getString())),
+                        Component.literal("§7Cosmetic item: §f"+(items.cosmetic().isEmpty()?"None":items.cosmetic().getHoverName().getString())),
+                        Component.literal(r.renterItemClaimPending ? "§cAdmin review required" : "§aClick to recover safely"))));
+                    menu.put(i,display);
+                } catch(Exception e) { menu.put(i,icon(Items.BARRIER,"§cItem escrow unavailable", "§7Ask an administrator")); }
+            }
+            show(45,Items.ARROW,"§7Previous page");
+            show(49,Items.CLOCK,"§bMy active rentals");
+            show(53,Items.ARROW,"§7Next page");
+            menu.sync();
+        }
+        void recoverDetail(String id) {
+            RentalListing r=engine.database().find(id);
+            if(r == null || !engine.recoverableItems(player.getUUID()).contains(r)) { recover(0); return; }
+            open("Recover rental equipment",clicked -> {
+                if(clicked==45) recover(0);
+                else if(clicked==49) { engine.claimRenterItems(player,id); recover(0); }
+            });
+            try {
+                var items=engine.previewRenterItems(r);
+                menu.put(21,items.held().isEmpty() ? icon(Items.GRAY_DYE,"§7No held item") : items.held().copy());
+                menu.put(23,items.cosmetic().isEmpty() ? icon(Items.GRAY_DYE,"§7No cosmetic item") : items.cosmetic().copy());
+            } catch(Exception e) { show(22,Items.BARRIER,"§cCannot read escrow"); }
+            show(31,Items.CHEST,"§b"+r.species,"§7Your rental has ended", "§7Original Pokémon belongs to the listing owner");
+            show(45,Items.ARROW,"§7Back");
+            if(r.renterItemClaimPending) show(49,Items.BARRIER,"§cRecovery locked for admin review");
+            else show(49,Items.EMERALD_BLOCK,"§aClaim equipped items", "§7Requires empty inventory slots", "§7Items are delivered to your inventory, NOT taken from this menu");
             menu.sync();
         }
         ItemStack listingIcon(RentalListing r) {
