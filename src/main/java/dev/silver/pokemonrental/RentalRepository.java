@@ -42,7 +42,7 @@ public final class RentalRepository {
     public void storeOriginal(RentalListing record, Pokemon pokemon, RegistryAccess registries) throws IOException {
         Path file = vault.resolve(record.id + ".json");
         if (Files.exists(file)) throw new IOException("Escrow snapshot already exists");
-        writeAtomically(file, pokemon.saveToJSON(registries).toString());
+        writeAtomically(file, pokemon.saveToJSON(registries, new JsonObject()).toString());
     }
     public Pokemon original(RentalListing record, RegistryAccess registries) throws IOException {
         Path file = vault.resolve(record.id + ".json");
