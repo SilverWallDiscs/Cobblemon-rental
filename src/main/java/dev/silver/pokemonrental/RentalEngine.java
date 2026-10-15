@@ -18,16 +18,18 @@ import java.util.stream.Collectors;
 public final class RentalEngine {
     private final MinecraftServer server;
     private final RentalRepository db;
+    private final RentalConfig config;
     private final CobbleDollarsEconomy money = new CobbleDollarsEconomy();
     private final Set<String> warned = new HashSet<>();
 
-    public RentalEngine(MinecraftServer server, RentalRepository db) { this.server = server; this.db = db; }
+    public RentalEngine(MinecraftServer server, RentalRepository db, RentalConfig config) { this.server = server; this.db = db; this.config = config; }
+    public RentalConfig config() { return config; }
     public RentalRepository database() { return db; }
     private RegistryAccess registry() { return server.registryAccess(); }
     public Pokemon partyPokemon(ServerPlayer player, int slot) { return Cobblemon.INSTANCE.getStorage().getParty(player).get(slot - 1); }
     public List<RentalListing> marketplace() { return db.all().stream().filter(RentalListing::available).sorted(Comparator.comparing(x -> x.id)).collect(Collectors.toList()); }
-    public List<RentalListing> byOwner(UUID id) { return db.all().stream().filter(x -> x.ownerId.equals(id)).sorted(Comparator.comparing((RentalListing x) -> x.id).reversed()).collect(Collectors.toList()); }
-    public List<RentalListing> byRenter(UUID id) { return db.all().stream().filter(x -> id.equals(x.renterId)).collect(Collectors.toList()); }
+    public List<RentalListing> byOwner(UUID id) { return db.all().stream().filter(x -> x.ownerId.equals(id) && (!x.originalReturned || (x.renterId != null && !x.payoutClaimed))).sorted(Comparator.comparing((RentalListing x) -> x.id).reversed()).collect(Collectors.toList()); }
+    public List<RentalListing> byRenter(UUID id) { return db.all().stream().filter(x -> id.equals(x.renterId) && x.active()).collect(Collectors.toList()); }
     public boolean isRentalPokemon(Pokemon p) { return db.wasRental(p.getUuid()); }
     /** Reject expired rental entities if chunks load AFTER their lease was cleaned up. */
     public boolean shouldDiscardTemporaryEntity(UUID pokemonId) {
@@ -38,11 +40,12 @@ public final class RentalEngine {
         return true;
     }
 
+    private static String money(long amount) { return "$" + String.format(Locale.US, "%,d", amount); }
     private void msg(ServerPlayer player, String text) { player.sendSystemMessage(Component.literal("§b[Pokémon Rental] §f" + text)); }
     private void warn(String key, Exception e) { if (warned.add(key)) PokemonRentalMod.LOGGER.error("Rental requires admin review: " + key, e); }
 
     public boolean list(ServerPlayer owner, int slot, long price, int minutes) {
-        if (slot < 1 || slot > 6 || price < 1 || price > 1_000_000_000_000L || minutes < 120 || minutes > 1440) return false;
+        if (slot < 1 || slot > 6 || price < 1 || price > config.maxListingPrice || minutes < config.minRentalMinutes || minutes > config.maxRentalMinutes) return false;
         Pokemon original = partyPokemon(owner, slot);
         if (original == null || db.wasRental(original.getUuid())) { msg(owner, "No eligible Pokémon in that slot."); return false; }
         if (db.all().stream().anyMatch(r -> r.originalPokemonId.equals(original.getUuid()) && !r.originalReturned)) {
@@ -60,7 +63,7 @@ public final class RentalEngine {
             if (!store.remove(original)) { msg(owner, "Couldn't remove the Pokémon from its original slot. Escrow is pending reconciliation."); return false; }
             listing.state = RentalListing.State.LISTED;
             db.save();
-            msg(owner, "Listed " + listing.species + " for " + price + " CobbleDollars / " + minutes + " minutes.");
+            msg(owner, "Listed " + listing.species + " for " + money(price) + " / " + minutes + " minutes.");
             return true;
         } catch (Exception e) { warn("list:" + listing.id, e); msg(owner, "Listing paused for safety. Contact an administrator."); return false; }
     }
@@ -100,7 +103,7 @@ public final class RentalEngine {
         if (!giveCopy(buyer, r)) msg(buyer, "Rent paid, but delivery is pending. Free a slot and run /pokerental again.");
         else msg(buyer, "Rental active! Expires " + new Date(r.expiresAt) + ". No held items are transferred.");
         ServerPlayer owner = server.getPlayerList().getPlayer(r.ownerId);
-        if (owner != null) msg(owner, r.species + " was rented for " + r.price + " CD. Earnings are claimable.");
+        if (owner != null) msg(owner, r.species + " was rented for " + money(r.price) + ". Earnings are claimable.");
         return true;
     }
 
@@ -211,7 +214,7 @@ public final class RentalEngine {
             r.payoutReview = true; db.save();
             if (!money.deposit(owner, r.price, before)) { warn("payout:" + r.id, new Exception("Unconfirmed deposit")); msg(owner, "Payout needs admin review. Do not retry."); return false; }
             r.payoutClaimed = true; db.save(); // Keep payoutReview=true as a durable audit marker.
-            msg(owner, "Claimed " + r.price + " CobbleDollars for " + r.species + "."); return true;
+            msg(owner, "Claimed " + money(r.price) + " for " + r.species + "."); return true;
         } catch (Exception e) { warn("payout:" + r.id, e); msg(owner, "Payout paused for admin review."); return false; }
     }
     public void claimAll(ServerPlayer owner) {

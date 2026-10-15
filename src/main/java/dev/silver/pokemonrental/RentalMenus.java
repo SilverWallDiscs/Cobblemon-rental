@@ -32,7 +32,8 @@ public final class RentalMenus {
     private static final class LockedMenu extends AbstractContainerMenu {
         final SimpleContainer content = new SimpleContainer(54);
         private final ServerPlayer viewer;
-        private final IntConsumer action;
+        private IntConsumer action;
+        private int lastButton;
         LockedMenu(int id, Inventory inventory, ServerPlayer player, IntConsumer action) {
             super(MenuType.GENERIC_9x6, id);
             this.viewer = player; this.action = action;
@@ -59,11 +60,15 @@ public final class RentalMenus {
         @Override public boolean stillValid(Player player) { return player == viewer; }
         @Override public void clicked(int slot, int button, ClickType type, Player player) {
             if (player != viewer || viewer.containerMenu != this || slot < 0 || slot >= 54) return;
-            if (type == ClickType.PICKUP && (button == 0 || button == 1)) action.accept(slot);
+            if (type == ClickType.PICKUP && (button == 0 || button == 1)) {
+                lastButton = button;
+                action.accept(slot);
+            }
             // Deliberately never call super.clicked: prevents quick-move, number-key
             // swapping, pickup, throw, clone, drag, and inventory desync exploits.
         }
-        void put(int slot, ItemStack item) { content.setItem(slot, item); broadcastChanges(); }
+        void put(int slot, ItemStack item) { content.setItem(slot, item); }
+        void sync() { broadcastChanges(); }
     }
 
     private static final class Session {
@@ -71,53 +76,98 @@ public final class RentalMenus {
         final RentalEngine engine;
         LockedMenu menu;
         int currentPage, selectedSlot;
-        long price = 1000;
-        int minutes = 120;
+        long price;
+        int minutes;
         Session(ServerPlayer p, RentalEngine e) { player=p; engine=e; }
-        void open(String title, IntConsumer callback) {
-            player.openMenu(new SimpleMenuProvider((id, inv, ignored) -> {
-                menu = new LockedMenu(id, inv, player, callback);
-                return menu;
-            }, Component.literal("§9Pokémon Rental §8| §f"+title)));
+
+        /** Keep the same containerId, slot layout and mouse position for all menu transitions. */
+        void open(String ignoredTitle, IntConsumer callback) {
+            if (menu == null || player.containerMenu != menu) {
+                player.openMenu(new SimpleMenuProvider((id, inv, ignored) -> {
+                    menu = new LockedMenu(id, inv, player, callback);
+                    return menu;
+                }, Component.literal("§9Pokémon Rental")));
+            }
+            menu.action = callback;
             filler();
         }
-        void filler() { for(int i=0;i<54;i++) menu.put(i, icon(Items.GRAY_STAINED_GLASS_PANE," ")); }
+        void filler() {
+            for (int i=0; i<54; i++) menu.put(i, icon(Items.GRAY_STAINED_GLASS_PANE, " "));
+        }
         void show(int slot, Item item, String text, String... tooltip) { menu.put(slot, icon(item,text,tooltip)); }
-        void back() { market(0); }
         void setup(int slot) {
-            selectedSlot = slot; price=1000; minutes=120;
+            selectedSlot = slot;
+            price = engine.config().initialPrice();
+            minutes = engine.config().initialRentalMinutes();
+            drawSetup();
+        }
+        private void adjustPrice(long delta) {
+            long max = engine.config().maxListingPrice;
+            if (delta > 0) price = price >= max - delta ? max : price + delta;
+            else price = Math.max(1L, price + delta);
+            drawSetup();
+        }
+        private void adjustMinutes(long delta) {
+            long candidate = (long) minutes + delta;
+            minutes = (int) Math.max(engine.config().minRentalMinutes,
+                Math.min(engine.config().maxRentalMinutes, candidate));
             drawSetup();
         }
         void drawSetup() {
             Pokemon pokemon = engine.partyPokemon(player, selectedSlot);
             if(pokemon == null || engine.isRentalPokemon(pokemon)) { market(0); return; }
-            open("List slot "+selectedSlot, clicked -> {
-                long[] delta = {-10000,-1000,-100,-1,1,100,1000,10000};
+            open("List slot " + selectedSlot, clicked -> {
+                long[] changes = {-1_000_000,-10_000,-100,-1,1,100,10_000,1_000_000};
                 int[] priceSlots = {18,19,20,21,23,24,25,26};
-                for(int i=0;i<priceSlots.length;i++) if(clicked==priceSlots[i]) {
-                    price = Math.max(1,Math.min(1_000_000_000_000L,price+delta[i])); drawSetup(); return;
+                for (int i=0; i<priceSlots.length; i++) if (clicked==priceSlots[i]) {
+                    adjustPrice(changes[i] * (menu.lastButton==1 ? 10L : 1L)); return;
                 }
-                if(clicked==28) { minutes=Math.max(120,minutes-1); drawSetup(); }
-                else if(clicked==29) { minutes=Math.max(120,minutes-60); drawSetup(); }
-                else if(clicked==30) { minutes=Math.max(120,minutes-15); drawSetup(); }
-                else if(clicked==32) { minutes=Math.min(1440,minutes+15); drawSetup(); }
-                else if(clicked==33) { minutes=Math.min(1440,minutes+60); drawSetup(); }
-                else if(clicked==34) { minutes=Math.min(1440,minutes+1); drawSetup(); }
-                else if(clicked==45) market(0);
-                else if(clicked==49) { if(engine.list(player,selectedSlot,price,minutes)) owned(0); else drawSetup(); }
+                // Time increments can be used with either mouse button; right-click x10.
+                int[] timeSlots = {27,28,29,30,32,33,34,35,36,37,42,43};
+                long[] timeDeltas = {-1440,-60,-15,-1,1,15,60,1440,-43_200,-10_080,10_080,43_200};
+                for (int i=0; i<timeSlots.length; i++) if (clicked==timeSlots[i]) {
+                    adjustMinutes(timeDeltas[i] * (menu.lastButton==1 ? 10L : 1L)); return;
+                }
+                if (clicked==38) { minutes = engine.config().minRentalMinutes; drawSetup(); }
+                else if (clicked==40) { minutes = engine.config().maxRentalMinutes; drawSetup(); }
+                else if (clicked==45) market(0);
+                else if (clicked==49) {
+                    if (engine.list(player, selectedSlot, price, minutes)) owned(0);
+                    else drawSetup();
+                }
             });
-            menu.put(13, pokemonIcon(pokemon, "§e"+pokemon.getSpecies().getName(),price,minutes));
-            show(22, Items.GOLD_INGOT,"§6Price: §f"+price+" CD", "§7Change price with the buttons", "§7Min: 1 | Max: 1 trillion");
-            show(31, Items.CLOCK,"§bDuration: §f"+duration(minutes),"§7Min: 2h | Max: 24h", "§7Adjust in 1, 15 or 60 minute steps");
+            menu.put(13, pokemonIcon(pokemon,"§e"+pokemon.getSpecies().getName(),price,minutes));
+            show(22,Items.GOLD_INGOT,"§6Price: §f"+money(price),
+                "§7Min: $1 | Max: " + money(engine.config().maxListingPrice),
+                "§7Left click adjusts by the shown amount", "§7Right click adjusts by 10x");
+            show(31,Items.CLOCK,"§bDuration: §f"+duration(minutes),
+                "§7Min: " + duration(engine.config().minRentalMinutes) + " | Max: " + duration(engine.config().maxRentalMinutes),
+                "§7Right click adjustments for 10x",
+                "§cRentals over 24 hours are not recommended");
             int[] priceSlots = {18,19,20,21,23,24,25,26};
-            String[] names = {"-10,000","-1,000","-100","-1","+1","+100","+1,000","+10,000"};
-            for(int i=0;i<priceSlots.length;i++) show(priceSlots[i],i<4?Items.RED_STAINED_GLASS_PANE:Items.LIME_STAINED_GLASS_PANE,"§e"+names[i]+" CD");
-            show(28,Items.RED_STAINED_GLASS_PANE,"§c-1 minute");
-            show(29,Items.RED_STAINED_GLASS_PANE,"§c-1 hour"); show(30,Items.RED_STAINED_GLASS_PANE,"§c-15 minutes");
-            show(32,Items.LIME_STAINED_GLASS_PANE,"§a+15 minutes"); show(33,Items.LIME_STAINED_GLASS_PANE,"§a+1 hour");
-            show(34,Items.LIME_STAINED_GLASS_PANE,"§a+1 minute");
+            long[] changes = {-1_000_000,-10_000,-100,-1,1,100,10_000,1_000_000};
+            for (int i=0;i<priceSlots.length;i++) show(priceSlots[i],
+                changes[i]<0?Items.RED_STAINED_GLASS_PANE:Items.LIME_STAINED_GLASS_PANE,
+                (changes[i]<0?"§c-":"§a+")+money(Math.abs(changes[i])), "§7Right click: 10x");
+            show(27,Items.RED_STAINED_GLASS_PANE,"§c-1 day");
+            show(28,Items.RED_STAINED_GLASS_PANE,"§c-1 hour");
+            show(29,Items.RED_STAINED_GLASS_PANE,"§c-15 minutes");
+            show(30,Items.RED_STAINED_GLASS_PANE,"§c-1 minute");
+            show(32,Items.LIME_STAINED_GLASS_PANE,"§a+1 minute");
+            show(33,Items.LIME_STAINED_GLASS_PANE,"§a+15 minutes");
+            show(34,Items.LIME_STAINED_GLASS_PANE,"§a+1 hour");
+            show(35,Items.LIME_STAINED_GLASS_PANE,"§a+1 day");
+            show(36,Items.RED_STAINED_GLASS_PANE,"§c-30 days");
+            show(37,Items.RED_STAINED_GLASS_PANE,"§c-7 days");
+            show(38,Items.CLOCK,"§eSet minimum duration");
+            show(40,Items.CLOCK,"§eSet maximum duration");
+            show(42,Items.LIME_STAINED_GLASS_PANE,"§a+7 days");
+            show(43,Items.LIME_STAINED_GLASS_PANE,"§a+30 days");
             show(45,Items.ARROW,"§7Back");
-            show(49,Items.EMERALD_BLOCK,"§aConfirm listing", "§7Your ORIGINAL goes into server escrow", "§7Any held item stays in escrow", "§7Your customer receives a temporary item-free copy");
+            show(49,Items.EMERALD_BLOCK,"§aConfirm listing",
+                "§7Your ORIGINAL goes into server escrow", "§7Any held item stays in escrow",
+                "§7Your customer receives an item-free copy");
+            menu.sync();
         }
         void market(int page) {
             List<RentalListing> listings = engine.marketplace();
@@ -135,6 +185,7 @@ public final class RentalMenus {
             show(48,Items.CLOCK,"§bMy active rentals");
             show(49,Items.CHEST,"§6My listings & earnings");
             show(53,Items.ARROW,"§eNext page");
+            menu.sync();
         }
         void marketDetail(String id) {
             RentalListing r=engine.database().find(id);
@@ -144,10 +195,11 @@ public final class RentalMenus {
                 if(clicked==49) { if(engine.rent(player,r.id)) rented(0); else market(0); }
             });
             menu.put(22,listingIcon(r));
-            show(31,Items.GOLD_INGOT,"§e"+r.price+" CobbleDollars", "§7Duration: " + duration(r.minutes));
+            show(31,Items.GOLD_INGOT,"§e"+money(r.price), "§7Duration: " + duration(r.minutes));
             show(45,Items.ARROW,"§7Back");
-            if(!r.owns(player.getUUID())) show(49,Items.EMERALD_BLOCK,"§aPay and rent", "§cThis permanently charges " + r.price + " CD", "§7Temporary Pokémon will be recalled after expiry");
+            if(!r.owns(player.getUUID())) show(49,Items.EMERALD_BLOCK,"§aPay and rent", "§cThis charges " + money(r.price), "§7Temporary Pokémon will be recalled after expiry");
             else show(49,Items.BARRIER,"§cYou cannot rent your own Pokémon");
+            menu.sync();
         }
         void owned(int page) {
             List<RentalListing> l=engine.byOwner(player.getUUID()); int max=Math.max(0,(l.size()-1)/45); currentPage=Math.max(0,Math.min(page,max));
@@ -161,10 +213,11 @@ public final class RentalMenus {
             for(int i=0;i<45;i++) { int at=i+currentPage*45; if(at>=l.size()) break; menu.put(i,listingIcon(l.get(at))); }
             show(45,Items.ARROW,"§7Previous page"); show(47,Items.GOLD_BLOCK,"§6Claim all earnings", "§7Each completed purchase can be claimed once");
             show(49,Items.COMPASS,"§aMarketplace"); show(53,Items.ARROW,"§7Next page");
+            menu.sync();
         }
         void ownerDetail(String id) {
             RentalListing r=engine.database().find(id);
-            if(r==null || !r.owns(player.getUUID())) { owned(0); return; }
+            if(r==null || !r.owns(player.getUUID()) || (r.originalReturned && (r.renterId==null || r.payoutClaimed))) { owned(0); return; }
             open("My " + r.species,clicked -> {
                 if(clicked==45) owned(0);
                 else if(clicked==48) { engine.claimEarnings(player,r); ownerDetail(id); }
@@ -174,10 +227,11 @@ public final class RentalMenus {
             show(31,Items.CLOCK,"§bStatus: " + r.state, "§7Time left: " + readable(engine.remaining(r)),
                 "§7Original returned: "+r.originalReturned);
             show(45,Items.ARROW,"§7Back");
-            show(48,Items.GOLD_INGOT,r.payoutClaimed ? "§7Earnings already claimed" : "§6Claim "+r.price+" CD", "§7Available after a successful purchase");
+            show(48,Items.GOLD_INGOT,r.payoutClaimed ? "§7Earnings already claimed" : "§6Claim "+money(r.price), "§7Available after a successful purchase");
             if(r.state==RentalListing.State.LISTED) show(50,Items.CHEST,"§aCancel listing & return original");
             else if(r.state==RentalListing.State.EXPIRED) show(50,Items.CHEST,"§aClaim your original Pokémon");
             else show(50,Items.BARRIER,"§7Original is locked until rental expires");
+            menu.sync();
         }
         void rented(int page) {
             List<RentalListing> l=engine.byRenter(player.getUUID()); int max=Math.max(0,(l.size()-1)/45); currentPage=Math.max(0,Math.min(page,max));
@@ -189,6 +243,7 @@ public final class RentalMenus {
             for(int i=0;i<45;i++) { int at=i+currentPage*45; if(at>=l.size()) break;
                 RentalListing r=l.get(at); menu.put(i,listingIcon(r)); }
             show(45,Items.ARROW,"§7Previous page"); show(49,Items.COMPASS,"§aMarketplace"); show(53,Items.ARROW,"§7Next page");
+            menu.sync();
         }
         ItemStack listingIcon(RentalListing r) {
             try {
@@ -199,8 +254,20 @@ public final class RentalMenus {
             } catch(Exception e) { return icon(Items.BARRIER,"§cEscrow unavailable", "§7Listing #"+r.id); }
         }
     }
-    private static String duration(int minutes) { return (minutes/60)+"h "+(minutes%60)+"m"; }
-    private static String readable(long ms) { return duration((int)((ms+59_999)/60_000)); }
+    private static String money(long amount) { return "$" + String.format(Locale.US,"%,d", amount); }
+    private static String duration(long minutes) {
+        if (minutes <= 0) return "0m";
+        long years = minutes / 525_600; minutes %= 525_600;
+        long days = minutes / 1_440; minutes %= 1_440;
+        long hours = minutes / 60; minutes %= 60;
+        StringJoiner out = new StringJoiner(" ");
+        if (years>0) out.add(years+"y");
+        if (days>0) out.add(days+"d");
+        if (hours>0) out.add(hours+"h");
+        if (minutes>0 || out.length()==0) out.add(minutes+"m");
+        return out.toString();
+    }
+    private static String readable(long ms) { return duration((Math.max(0,ms)+59_999L)/60_000L); }
     private static ItemStack icon(Item item,String title,String... lines) {
         ItemStack stack = new ItemStack(item); stack.set(DataComponents.CUSTOM_NAME,Component.literal(title));
         if(lines.length>0) stack.set(DataComponents.LORE,new ItemLore(Arrays.stream(lines).<Component>map(Component::literal).toList()));
@@ -219,7 +286,7 @@ public final class RentalMenus {
         lore.add(Component.literal("§f"+stats(pokemon,true)));
         lore.add(Component.literal("§bEVs §7(HP/ATK/DEF/SPA/SPD/SPE)"));
         lore.add(Component.literal("§f"+stats(pokemon,false)));
-        lore.add(Component.literal("§6Price: §f"+price+" CobbleDollars"));
+        lore.add(Component.literal("§6Price: §f"+money(price)));
         lore.add(Component.literal("§bRental time: §f"+duration(minutes)));
         for(String line:extra) lore.add(Component.literal(line));
         stack.set(DataComponents.LORE,new ItemLore(lore)); return stack;

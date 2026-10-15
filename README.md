@@ -1,4 +1,4 @@
-# Pokémon Rental (Fabric 1.21.1) — source prototype v0.1.2
+# Pokémon Rental (Fabric 1.21.1) — source prototype v0.1.3
 
 A **server-only** Cobblemon 1.7.3 Pokémon rental marketplace using **CobbleDollars 2.0 Beta 6.1**. Clients need their normal Cobblemon client but do not need this addon.
 
@@ -8,9 +8,9 @@ A **server-only** Cobblemon 1.7.3 Pokémon rental marketplace using **CobbleDoll
 
 - `/pokerental` opens a vanilla 54-slot, 45-listings-per-page marketplace using **`cobblemon:pokemon_model`**.
 - Hover for level, nature, ability, gender, egg groups, IVs, EVs, price and rental length.
-- `/pokerental 1` to `/pokerental 6`: pick a party Pokémon; configure CobbleDollars price (±1, ±100, ±1000, ±10000) and duration (±1/15/60 minutes, **2–24 hours**) in a GUI.
-- `/pokerental mine`: manage listings, claim earnings, and reclaim originals after expiry or cancel listings before purchase.
-- `/pokerental rented`: current/past rentals and their status.
+- `/pokerental 1` to `/pokerental 6`: choose a party Pokémon, configure the rental price (displayed with `$`) and rental duration in the GUI. Left-click to adjust amounts; right-click buttons for 10× steps. Minimum and maximum duration buttons support very long rentals, subject to the server configuration.
+- `/pokerental mine`: manage current listings, claim outstanding earnings, and reclaim originals after expiry or cancel listings before purchase. Entries disappear from the menu after the original was returned **and** any earnings were claimed; internal audit records remain preserved.
+- `/pokerental rented`: **only current, unexpired rentals** and their remaining time. Finished rentals are hidden from player menus.
 - An original-Pokémon snapshot is written to `world/pokemon-rental/originals/*.json` before removing it from the owner's party. An immutable copy is created with a **different Pokémon UUID**, without held item, cosmetic item, shoulder state, or pasture tether. The original is not changed by the renter.
 - Records persist in `world/pokemon-rental/index.json` via temp-file + sync + atomic rename.
 - When a rental expires, attempt to remove the temporary UUID from the renter's party/PC (including offline data), scan online players, recall the Pokémon entity, discard expired temporary Pokémon entities on chunk load, and allow the owner to claim the untouched original.
@@ -21,8 +21,37 @@ A **server-only** Cobblemon 1.7.3 Pokémon rental marketplace using **CobbleDoll
 
 - Java 21, Gradle 8.12.1 (install separately; Gradle Wrapper JAR is not bundled; CI installs Gradle 8.12.1).
 - Minecraft Fabric 1.21.1, Fabric API, Fabric Loader, Cobblemon **1.7.3** and CobbleDollars **2.0.0 Beta-6.1**.
-- `gradle build` (source uses Fabric Loom and Mojang official mappings, no client code). Output should be `build/libs/pokemon-rental-0.1.2.jar` after a successful build.
+- `gradle build` (source uses Fabric Loom and Mojang official mappings, no client code). Output should be `build/libs/pokemon-rental-0.1.3.jar` after a successful build.
 - Install the compiled JAR only in the server's `mods/` folder.
+
+
+## Server configuration (English)
+
+On the first startup, the mod creates **`config/pokemon-rental.json`** in the Minecraft server directory:
+
+```json
+{
+  "maxListingPrice": 100000000,
+  "minRentalMinutes": 120,
+  "maxRentalMinutes": 1440
+}
+```
+
+- `maxListingPrice` sets the maximum rental listing price in CobbleDollars. Default **$100,000,000**; minimum allowed value: 1.
+- `minRentalMinutes` sets the minimum duration in whole minutes. Default **120 minutes (2 hours)**. Set to **1** to allow one-minute rentals.
+- `maxRentalMinutes` sets the maximum duration in whole minutes. Default **1440 minutes (24 hours)**. Set to **2880** for 48 hours or **525600** for one 365-day year. Longer durations are also supported (up to Java's positive 32-bit integer range), but are strongly discouraged.
+- The maximum must be at least the configured minimum. Invalid configuration fails closed and is reported in the server logs; the mod does not overwrite the file.
+- **Restart the server after changing the configuration.** Changes affect newly created listings, not existing rental contracts.
+
+**Recommendation:** Avoid setting a maximum greater than 24 hours, because a player may accidentally lock their Pokémon for an excessively long time. A rental's duration cannot be changed after purchase.
+
+## Menu interaction and rental history
+
+The mod opens one vanilla 6-row chest menu per session, then updates its slot contents rather than opening a new container on every click. This prevents the mouse from resetting to the center when adjusting the price, duration, or changing pages.
+
+All 54 GUI slots remain **server-owned and non-extractable**; clicks are intercepted, and shift-click, keyboard hotbar swaps, creative middle-click copies, dragging, and dropping are denied. Player inventory slots are included in the client menu but locked while the menu is open.
+
+**History is hidden, not erased:** once the Pokémon has been returned and outstanding earnings have been claimed, the corresponding record no longer appears in `My Listings`. `My Rentals` shows active rentals only. Permanent temporary-Pokémon UUID records and original escrow snapshots are retained for crash recovery and anti-duplication checks. Never delete them manually.
 
 ## Important remaining work — mandatory before public deployment
 
@@ -49,7 +78,7 @@ A **server-only** Cobblemon 1.7.3 Pokémon rental marketplace using **CobbleDoll
 
 ## GitHub Actions build
 
-The `.github/workflows/build.yml` workflow installs Java 21 and Gradle 8.12.1, compiles with `gradle clean build`, and uploads the remapped JAR as a downloadable workflow artifact. **Build #4 passed** for the Java source; the JAR can be downloaded from the Actions artifact named `pokemon-rental-jar`. A successful compilation does NOT imply runtime anti-duplication safety.
+The `.github/workflows/build.yml` workflow installs Java 21 and Gradle 8.12.1, compiles with `gradle clean build`, and uploads the remapped JAR as a downloadable workflow artifact. **Build #4 passed** for v0.1.2; newer versions use the same CI workflow; the JAR can be downloaded from the Actions artifact named `pokemon-rental-jar`. A successful compilation does NOT imply runtime anti-duplication safety.
 
 ### Gradle setup note
 
@@ -57,7 +86,7 @@ Fabric Loom **1.10.5** requires **Gradle 8.12+**. An earlier source prototype in
 
 ### Initial private-server test checklist
 
-1. Start Fabric 1.21.1 with Fabric API, Cobblemon 1.7.3, CobbleDollars 2.0 Beta 6.1 and `pokemon-rental-0.1.2.jar` on the **server only**.
+1. Start Fabric 1.21.1 with Fabric API, Cobblemon 1.7.3, CobbleDollars 2.0 Beta 6.1 and `pokemon-rental-0.1.3.jar` on the **server only**.
 2. Back up world data. With two test accounts, list a Pokémon carrying a held item using `/pokerental 1`, verify the original disappears from the owner's party, and verify the marketplace GUI.
 3. Rent it with the second account; verify one CobbleDollars debit, a temporary Pokémon with no held item, and the owner payout claim. Test relogging and both party/PC placement.
 4. Test after the 2-hour minimum rental and server restarts; check that the rental copy is removed and the untouched original can be reclaimed with its original held item.
