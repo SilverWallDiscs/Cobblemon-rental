@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "id": "pokemonrental",
+  "version": "${version}",
+  "name": "Pokemon Rental",
+  "description": "Server-side Pokémon rentals with CobbleDollars and immutable Pokémon escrow.",
+  "authors": ["Silver"],
+  "environment": "server",
+  "entrypoints": {"main": ["dev.silver.pokemonrental.PokemonRentalMod"]},
+  "depends": {
+    "fabricloader": ">=0.17.2",
+    "minecraft": "1.21.1",
+    "java": ">=21",
+    "fabric-api": "*",
+    "cobblemon": ">=1.7.3",
+    "cobbledollars": "*"
+  }
+}
