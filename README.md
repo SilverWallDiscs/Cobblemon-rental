@@ -2,7 +2,7 @@
 
 A **server-only** Cobblemon 1.7.3 Pokémon rental marketplace using **CobbleDollars 2.0 Beta 6.1**. Clients need their normal Cobblemon client but do not need this addon.
 
-**CURRENT STATUS: SOURCE PROTOTYPE, NOT VERIFIED TO COMPILE/RUN, NOT SAFE FOR A PUBLIC ECONOMY.** The development environment used to create this project cannot fetch Gradle dependencies or boot a Minecraft server. Test on an isolated server and fix integration/compiler differences before attempting public release. This is not a validated production build.
+**CURRENT STATUS: GITHUB ACTIONS BUILD PASSED; GAMEPLAY/ANTI-DUPLICATION NOT VERIFIED. NOT SAFE FOR A PUBLIC ECONOMY.** The GitHub Actions build compiles and remaps the server-side JAR, but no Minecraft server runtime tests have been performed. Test only on a disposable private server with backups.
 
 ## Features implemented in the source
 
@@ -26,7 +26,7 @@ A **server-only** Cobblemon 1.7.3 Pokémon rental marketplace using **CobbleDoll
 
 ## Important remaining work — mandatory before public deployment
 
-1. **Compilation and runtime compatibility tests** against the exact server pack. No executable JAR is supplied because compilation and server testing were not possible here.
+1. **Compilation and runtime compatibility tests** against the exact server pack. A compilable test JAR is supplied in GitHub Actions artifacts; server testing has NOT been performed.
 2. **Cross-account/offline transfer hardening:** `tradeable = false` prevents normal trades, but external GTS, commands, breeding, custom pasture implementations, and other mods may transfer, clone or transform rented Pokémon. To guarantee no duplication, add Cobblemon storage hooks/mixins and a comprehensive ownership audit, including *every* party and PC and unloaded tethered entities, before claiming absolute safety. The current online sweep alone is insufficient.
 3. **Crash-consistent transaction integration:** direct BigInteger set/get is *not* a multi-resource ACID transaction. REVIEW/PENDING statuses must be manually reconciled with CobbleDollars ledger/account balance and escrow before re-enabling payments. Also handle interrupted payouts with admin tools and log audit details.
 4. **World durability:** force-save Cobblemon party/PC writes and integrate with its storage factory save lifecycle; test crash after every persisted transition. Test the atomic-rename filesystem behavior and backups.
@@ -49,8 +49,16 @@ A **server-only** Cobblemon 1.7.3 Pokémon rental marketplace using **CobbleDoll
 
 ## GitHub Actions build
 
-The `.github/workflows/build.yml` workflow installs Java 21 and Gradle 8.12.1, compiles with `gradle clean build`, and uploads the remapped JAR as a downloadable workflow artifact. Building in GitHub Actions does not imply that runtime anti-duplication behavior has been tested.
+The `.github/workflows/build.yml` workflow installs Java 21 and Gradle 8.12.1, compiles with `gradle clean build`, and uploads the remapped JAR as a downloadable workflow artifact. **Build #4 passed** for the Java source; the JAR can be downloaded from the Actions artifact named `pokemon-rental-jar`. A successful compilation does NOT imply runtime anti-duplication safety.
 
 ### Gradle setup note
 
 Fabric Loom **1.10.5** requires **Gradle 8.12+**. An earlier source prototype incorrectly used Gradle 8.10.2, which cannot load Loom 1.10.x. The workflow was corrected to use Gradle 8.12.1. This repository deliberately does not commit a non-working Gradle Wrapper without its binary `gradle-wrapper.jar`: install Gradle 8.12.1 to build locally, or download the compiled artifact from GitHub Actions once the workflow passes.
+
+### Initial private-server test checklist
+
+1. Start Fabric 1.21.1 with Fabric API, Cobblemon 1.7.3, CobbleDollars 2.0 Beta 6.1 and `pokemon-rental-0.1.2.jar` on the **server only**.
+2. Back up world data. With two test accounts, list a Pokémon carrying a held item using `/pokerental 1`, verify the original disappears from the owner's party, and verify the marketplace GUI.
+3. Rent it with the second account; verify one CobbleDollars debit, a temporary Pokémon with no held item, and the owner payout claim. Test relogging and both party/PC placement.
+4. Test after the 2-hour minimum rental and server restarts; check that the rental copy is removed and the untouched original can be reclaimed with its original held item.
+5. Repeat with PC, pasture and offline players. Record any duplication, stale entity, or vanished held-item behavior. **Never run this prototype on a public server economy.**
