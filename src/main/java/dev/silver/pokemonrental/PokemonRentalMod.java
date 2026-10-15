@@ -51,7 +51,7 @@ public final class PokemonRentalMod implements ModInitializer {
                 .then(literal("recover").executes(ctx -> { ServerPlayer p=ctx.getSource().getPlayerOrException(); if(engine!=null) RentalMenus.recover(p,engine,0); return 1; }))
             );
         });
-        LOGGER.info("Pokémon Rental initialized (server-side). Source build: 0.1.4");
+        LOGGER.info("Pokémon Rental initialized (server-side). Source build: 0.1.5");
     }
     private void init(MinecraftServer server) {
         try {

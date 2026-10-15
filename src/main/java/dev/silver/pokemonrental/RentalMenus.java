@@ -35,6 +35,7 @@ public final class RentalMenus {
         private final ServerPlayer viewer;
         private IntConsumer action;
         private int lastButton;
+        private boolean shiftAdjustEnabled;
         LockedMenu(int id, Inventory inventory, ServerPlayer player, IntConsumer action) {
             super(MenuType.GENERIC_9x6, id);
             this.viewer = player; this.action = action;
@@ -64,6 +65,13 @@ public final class RentalMenus {
             if (type == ClickType.PICKUP && (button == 0 || button == 1)) {
                 lastButton = button;
                 action.accept(slot);
+            } else if (type == ClickType.QUICK_MOVE && shiftAdjustEnabled &&
+                    ((slot >= 18 && slot <= 21) || (slot >= 23 && slot <= 30) ||
+                     (slot >= 32 && slot <= 35))) {
+                // Shift-click is a 10x increment only on price/time adjustment controls.
+                // No item is ever moved: all other shift-clicks remain blocked.
+                lastButton = 1;
+                action.accept(slot);
             }
             // Deliberately never call super.clicked: prevents quick-move, number-key
             // swapping, pickup, throw, clone, drag, and inventory desync exploits.
@@ -90,6 +98,7 @@ public final class RentalMenus {
                 }, Component.literal("§9Pokémon Rental")));
             }
             menu.action = callback;
+            menu.shiftAdjustEnabled = false;
             filler();
         }
         void filler() {
@@ -123,33 +132,32 @@ public final class RentalMenus {
                 for (int i=0; i<priceSlots.length; i++) if (clicked==priceSlots[i]) {
                     adjustPrice(changes[i] * (menu.lastButton==1 ? 10L : 1L)); return;
                 }
-                // Time increments can be used with either mouse button; right-click x10.
-                int[] timeSlots = {27,28,29,30,32,33,34,35,36,37,42,43};
-                long[] timeDeltas = {-1440,-60,-15,-1,1,15,60,1440,-43_200,-10_080,10_080,43_200};
+                // Right-click and Shift-click multiply the adjustment by 10.
+                int[] timeSlots = {27,28,29,30,32,33,34,35};
+                long[] timeDeltas = {-1440,-60,-15,-1,1,15,60,1440};
                 for (int i=0; i<timeSlots.length; i++) if (clicked==timeSlots[i]) {
                     adjustMinutes(timeDeltas[i] * (menu.lastButton==1 ? 10L : 1L)); return;
                 }
-                if (clicked==38) { minutes = engine.config().minRentalMinutes; drawSetup(); }
-                else if (clicked==40) { minutes = engine.config().maxRentalMinutes; drawSetup(); }
-                else if (clicked==45) market(0);
+                if (clicked==45) market(0);
                 else if (clicked==49) {
                     if (engine.list(player, selectedSlot, price, minutes)) owned(0);
                     else drawSetup();
                 }
             });
+            menu.shiftAdjustEnabled = true;
             menu.put(13, pokemonIcon(pokemon,"§e"+pokemon.getSpecies().getName(),price,minutes));
             show(22,Items.GOLD_INGOT,"§6Price: §f"+money(price),
                 "§7Min: $1 | Max: " + money(engine.config().maxListingPrice),
-                "§7Left click adjusts by the shown amount", "§7Right click adjusts by 10x");
+                "§7Left click adjusts by the shown amount", "§7Right click or Shift-click: 10x");
             show(31,Items.CLOCK,"§bDuration: §f"+duration(minutes),
                 "§7Min: " + duration(engine.config().minRentalMinutes) + " | Max: " + duration(engine.config().maxRentalMinutes),
-                "§7Right click adjustments for 10x",
+                "§7Right click or Shift-click: 10x",
                 "§cRentals over 24 hours are not recommended");
             int[] priceSlots = {18,19,20,21,23,24,25,26};
             long[] changes = {-1_000_000,-10_000,-100,-1,1,100,10_000,1_000_000};
             for (int i=0;i<priceSlots.length;i++) show(priceSlots[i],
                 changes[i]<0?Items.RED_STAINED_GLASS_PANE:Items.LIME_STAINED_GLASS_PANE,
-                (changes[i]<0?"§c-":"§a+")+money(Math.abs(changes[i])), "§7Right click: 10x");
+                (changes[i]<0?"§c-":"§a+")+money(Math.abs(changes[i])), "§7Right click or Shift-click: 10x");
             show(27,Items.RED_STAINED_GLASS_PANE,"§c-1 day");
             show(28,Items.RED_STAINED_GLASS_PANE,"§c-1 hour");
             show(29,Items.RED_STAINED_GLASS_PANE,"§c-15 minutes");
@@ -158,12 +166,6 @@ public final class RentalMenus {
             show(33,Items.LIME_STAINED_GLASS_PANE,"§a+15 minutes");
             show(34,Items.LIME_STAINED_GLASS_PANE,"§a+1 hour");
             show(35,Items.LIME_STAINED_GLASS_PANE,"§a+1 day");
-            show(36,Items.RED_STAINED_GLASS_PANE,"§c-30 days");
-            show(37,Items.RED_STAINED_GLASS_PANE,"§c-7 days");
-            show(38,Items.CLOCK,"§eSet minimum duration");
-            show(40,Items.CLOCK,"§eSet maximum duration");
-            show(42,Items.LIME_STAINED_GLASS_PANE,"§a+7 days");
-            show(43,Items.LIME_STAINED_GLASS_PANE,"§a+30 days");
             show(45,Items.ARROW,"§7Back");
             show(49,Items.EMERALD_BLOCK,"§aConfirm listing",
                 "§7Your ORIGINAL goes into server escrow", "§7Any held item stays in escrow",
