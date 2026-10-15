@@ -203,7 +203,7 @@ public final class RentalMenus {
     private static String readable(long ms) { return duration((int)((ms+59_999)/60_000)); }
     private static ItemStack icon(Item item,String title,String... lines) {
         ItemStack stack = new ItemStack(item); stack.set(DataComponents.CUSTOM_NAME,Component.literal(title));
-        if(lines.length>0) stack.set(DataComponents.LORE,new ItemLore(Arrays.stream(lines).map(Component::literal).toList()));
+        if(lines.length>0) stack.set(DataComponents.LORE,new ItemLore(Arrays.stream(lines).<Component>map(Component::literal).toList()));
         return stack;
     }
     private static ItemStack pokemonIcon(Pokemon pokemon, String display, long price, int minutes, String... extra) {
