@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "pokemonrental",
   "version": "${version}",
-  "name": "Pokemon Rental",
+  "name": "cobblemon- rental",
   "description": "Server-side Pokémon rentals with CobbleDollars and immutable Pokémon escrow.",
   "authors": ["Silver"],
   "environment": "server",
