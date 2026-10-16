@@ -1,4 +1,4 @@
-# Pokémon Rental (Fabric 1.21.1) — source prototype v0.1.5
+# Cobblemon Rental (Fabric 1.21.1) — source prototype v0.1.5
 
 A **server-only** Cobblemon 1.7.3 Pokémon rental marketplace using **CobbleDollars 2.0 Beta 6.1**. Clients need their normal Cobblemon client but do not need this addon.
 
