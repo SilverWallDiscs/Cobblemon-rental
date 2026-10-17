@@ -51,13 +51,14 @@ public final class PokemonRentalMod implements ModInitializer {
                 .then(literal("recover").executes(ctx -> { ServerPlayer p=ctx.getSource().getPlayerOrException(); if(engine!=null) RentalMenus.recover(p,engine,0); return 1; }))
             );
         });
-        LOGGER.info("Pokémon Rental initialized (server-side). Source build: 0.1.5");
+        LOGGER.info("Pokémon Rental initialized (server-side). Source build: 0.2.0");
     }
     private void init(MinecraftServer server) {
         try {
             RentalRepository database = new RentalRepository(server.getWorldPath(LevelResource.ROOT));
             RentalConfig config = RentalConfig.load();
             engine = new RentalEngine(server,database,config);
+            engine.validateEconomy(); // Never allow new listings with a missing backend/currency.
             engine.tick();
             LOGGER.info("Pokémon Rental loaded {} escrow records.",database.all().size());
         } catch(Exception e) {

@@ -16,7 +16,13 @@ import java.nio.file.StandardCopyOption;
 public final class RentalConfig {
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
-    /** Maximum listing price in CobbleDollars. Default: $100,000,000. */
+    /** Economy backend: "cobbledollars" (default) or "impactor". */
+    public String economyProvider = "cobbledollars";
+    /** Impactor currency: "primary" uses the server's primary currency; or use namespace:key. */
+    public String impactorCurrency = "primary";
+    /** Display prefix used for the chosen currency (defaults to $). */
+    public String currencySymbol = "$";
+    /** Maximum listing price in the chosen currency. Default: 100,000,000. */
     public long maxListingPrice = 100_000_000L;
     /** Minimum rental duration in minutes. Default: 120 (2 hours). */
     public int minRentalMinutes = 120;
@@ -46,6 +52,12 @@ public final class RentalConfig {
     }
 
     private void validate() throws IOException {
+        if (!"cobbledollars".equals(economyProvider) && !"impactor".equals(economyProvider))
+            throw new IOException("economyProvider must be either cobbledollars or impactor");
+        if (impactorCurrency == null || impactorCurrency.isBlank())
+            throw new IOException("impactorCurrency must be 'primary' or a namespaced Impactor currency key");
+        if (currencySymbol == null || currencySymbol.isBlank() || currencySymbol.length() > 16)
+            throw new IOException("currencySymbol must have 1-16 characters");
         if (maxListingPrice < 1) throw new IOException("maxListingPrice must be at least 1");
         if (minRentalMinutes < 1) throw new IOException("minRentalMinutes must be at least 1 (one minute)");
         if (maxRentalMinutes < minRentalMinutes)

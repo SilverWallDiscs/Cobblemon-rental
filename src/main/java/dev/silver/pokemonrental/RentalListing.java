@@ -11,6 +11,12 @@ public final class RentalListing {
     public String species;
     public int level;
     public long price;
+    /** Null means legacy CobbleDollars (existing v0.1.5 contracts). Never reassign after listing. */
+    public String economyProvider;
+    /** Locked Impactor currency key at listing creation, or "cobbledollars". */
+    public String economyCurrency;
+    /** Immutable display symbol for an existing listing. */
+    public String currencySymbol;
     public int minutes;
     public State state;
     public UUID renterId;

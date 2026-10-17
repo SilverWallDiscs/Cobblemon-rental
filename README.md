@@ -1,6 +1,6 @@
-# Cobblemon Rental (Fabric 1.21.1) — source prototype v0.1.5
+# Pokémon Rental (Fabric 1.21.1) — source prototype v0.2.0
 
-A **server-only** Cobblemon 1.7.3 Pokémon rental marketplace using **CobbleDollars 2.0 Beta 6.1**. Clients need their normal Cobblemon client but do not need this addon.
+A **server-only** Cobblemon 1.7.3 Pokémon rental marketplace using **CobbleDollars 2.0 Beta 6.1** (if using CobbleDollars) **or Impactor 5.3.5 Fabric** (if using Impactor). Clients need their normal Cobblemon client but do not need this addon.
 
 **CURRENT STATUS: GITHUB ACTIONS BUILD PASSED; GAMEPLAY/ANTI-DUPLICATION NOT VERIFIED. NOT SAFE FOR A PUBLIC ECONOMY.** The GitHub Actions build compiles and remaps the server-side JAR, but no Minecraft server runtime tests have been performed. Test only on a disposable private server with backups.
 
@@ -8,20 +8,20 @@ A **server-only** Cobblemon 1.7.3 Pokémon rental marketplace using **CobbleDoll
 
 - `/pokerental` opens a vanilla 54-slot, 45-listings-per-page marketplace using **`cobblemon:pokemon_model`**.
 - Hover for level, nature, ability, gender, egg groups, IVs, EVs, price and rental length.
-- `/pokerental 1` to `/pokerental 6`: choose a party Pokémon, configure the rental price (displayed with `$`) and rental duration in the GUI. Left-click to adjust amounts; right-click or Shift-click **only on price and duration adjustment buttons** for 10× steps. The largest visible duration adjustment is ±1 day. Rental duration limits still follow server configuration; the extra ±7-day and ±30-day buttons were removed.
+- `/pokerental 1` to `/pokerental 6`: choose a party Pokémon, configure the rental price (default symbol `$`) and rental duration in the GUI. Left-click to adjust amounts; right-click or Shift-click **only on price and duration adjustment buttons** for 10× steps. The largest visible duration adjustment is ±1 day. Rental duration limits still follow server configuration; the extra ±7-day and ±30-day buttons were removed.
 - `/pokerental mine`: manage current listings, claim outstanding earnings, and reclaim originals after expiry or cancel listings before purchase. Entries disappear from the menu after the original was returned **and** any earnings were claimed; internal audit records remain preserved.
 - `/pokerental rented`: **only current, unexpired rentals** and their remaining time. Finished rentals are hidden from player menus.
 - An original-Pokémon snapshot is written to `world/pokemon-rental/originals/*.json` before removing it from the owner's party. An immutable copy is created with a **different Pokémon UUID**, without held item, cosmetic item, shoulder state, or pasture tether. The original is not changed by the renter.
 - Records persist in `world/pokemon-rental/index.json` via temp-file + sync + atomic rename.
 - When a rental expires, attempt to remove the temporary UUID from the renter's party/PC (including offline data), scan online players, recall the Pokémon entity, discard expired temporary Pokémon entities on chunk load, and allow the owner to claim the untouched original.
 - Disabled click types in a *server-only chest menu*; no draggable GUI items / creative clone via those GUI controls. Tracks temporary Pokémon UUIDs permanently as a blocklist for re-listing.
-- CobbleDollars balances through reflective BigInteger 2.x player interface; payment and payout intents are written before money changes. If a crash leaves the payment ambiguous, the record moves (or remains) in a REVIEW/PENDING state for an administrator; it must not be automatically retried.
+- CobbleDollars balances through reflective BigInteger 2.x player interface, or Impactor 5.3.5 accounts/transactions with asynchronous account loading; payment and payout intents are written before money changes. If a crash leaves the payment ambiguous, the record moves (or remains) in a REVIEW/PENDING state for an administrator; it must not be automatically retried.
 
 ## Requirements / compile
 
 - Java 21, Gradle 8.12.1 (install separately; Gradle Wrapper JAR is not bundled; CI installs Gradle 8.12.1).
-- Minecraft Fabric 1.21.1, Fabric API, Fabric Loader, Cobblemon **1.7.3** and CobbleDollars **2.0.0 Beta-6.1**.
-- `gradle build` (source uses Fabric Loom and Mojang official mappings, no client code). Output should be `build/libs/pokemon-rental-0.1.5.jar` after a successful build.
+- Minecraft Fabric 1.21.1, Fabric API, Fabric Loader, Cobblemon **1.7.3**, and **either** CobbleDollars **2.0.0 Beta-6.1** **or** Impactor **5.3.5 for Fabric 1.21.1**, depending on your selected backend.
+- `gradle build` (source uses Fabric Loom and Mojang official mappings, no client code). Output should be `build/libs/pokemon-rental-0.2.0.jar` after a successful build.
 - Install the compiled JAR only in the server's `mods/` folder.
 
 
@@ -31,19 +31,38 @@ On the first startup, the mod creates **`config/pokemon-rental.json`** in the Mi
 
 ```json
 {
+  "economyProvider": "cobbledollars",
+  "impactorCurrency": "primary",
+  "currencySymbol": "$",
   "maxListingPrice": 100000000,
   "minRentalMinutes": 120,
   "maxRentalMinutes": 1440
 }
 ```
 
-- `maxListingPrice` sets the maximum rental listing price in CobbleDollars. Default **$100,000,000**; minimum allowed value: 1.
+- `economyProvider` selects **`cobbledollars`** or **`impactor`**. CobbleDollars is the default. Install the selected economy mod on your **server** (not necessarily both).
+- `impactorCurrency` is **`primary`** for Impactor's main currency or a namespaced registered currency key (e.g. `your_namespace:coins`). This is only used when Impactor is selected.
+- `currencySymbol` is the in-menu price prefix; default **`$`**. Set it to a different character/string if your chosen Impactor currency uses another symbol.
+- `maxListingPrice` sets the maximum rental listing price in the selected currency. Default **$100,000,000**; minimum allowed value: 1.
 - `minRentalMinutes` sets the minimum duration in whole minutes. Default **120 minutes (2 hours)**. Set to **1** to allow one-minute rentals.
 - `maxRentalMinutes` sets the maximum duration in whole minutes. Default **1440 minutes (24 hours)**. Set to **2880** for 48 hours or **525600** for one 365-day year. Longer durations are also supported (up to Java's positive 32-bit integer range), but are strongly discouraged.
 - The maximum must be at least the configured minimum. Invalid configuration fails closed and is reported in the server logs; the mod does not overwrite the file.
 - **Restart the server after changing the configuration.** Changes affect newly created listings, not existing rental contracts.
 
 **Recommendation:** Avoid setting a maximum greater than 24 hours, because a player may accidentally lock their Pokémon for an excessively long time. A rental's duration cannot be changed after purchase.
+
+## Optional Impactor integration
+
+Impactor 5.3.5 for Fabric 1.21.1 can replace CobbleDollars as the payment backend. No client installation of Cobblemon Rental is required.
+
+1. Install [Impactor](https://modrinth.com/mod/impactor) on the server with Fabric API.
+2. Set `"economyProvider": "impactor"` in `config/pokemon-rental.json` and choose `"impactorCurrency": "primary"` or a registered namespaced currency key.
+3. Restart the server. **Impactor and CobbleDollars are alternatives; do not change currencies for active listings.**
+4. The first Impactor purchase or payout may show **“Account is loading, try again shortly”** while asynchronous account storage is fetched. Retry the click; the mod never blocks the tick thread waiting for account IO.
+
+**Migration and safety:** Existing pre-v0.2.0 rental records always remain tied to **CobbleDollars**, even after changing the default backend. New listings permanently store their selected provider, Impactor currency ID, and currency symbol; earnings are paid through the original backend instead of switching currency behind the player's back. To claim older CobbleDollars earnings, leave CobbleDollars installed. Old records are NOT converted to Impactor currency, and **balances are never migrated**. Retain your world backups before switching backends.
+
+Transaction safety is still a work in progress: CobbleDollars and Impactor use different storage and neither backend forms an atomic transaction with the rental ledger. Crash-ambiguous charges/payouts must be reconciled manually by administrators. Test on a disposable server before enabling a public economy.
 
 ## Menu interaction and rental history
 
@@ -86,13 +105,13 @@ Fabric Loom **1.10.5** requires **Gradle 8.12+**. An earlier source prototype in
 
 ### Initial private-server test checklist
 
-1. Start Fabric 1.21.1 with Fabric API, Cobblemon 1.7.3, CobbleDollars 2.0 Beta 6.1 and `pokemon-rental-0.1.5.jar` on the **server only**.
+1. Start Fabric 1.21.1 with Fabric API, Cobblemon 1.7.3, CobbleDollars 2.0 Beta 6.1 and `pokemon-rental-0.2.0.jar` on the **server only**.
 2. Back up world data. With two test accounts, list a Pokémon carrying a held item using `/pokerental 1`, verify the original disappears from the owner's party, and verify the marketplace GUI.
 3. Rent it with the second account; verify one CobbleDollars debit, a temporary Pokémon with no held item, and the owner payout claim. Test relogging and both party/PC placement.
 4. Test after the 2-hour minimum rental and server restarts; check that the rental copy is removed and the untouched original can be reclaimed with its original held item.
 5. Repeat with PC, pasture and offline players. Record any duplication, stale entity, or vanished held-item behavior. **Never run this prototype on a public server economy.**
 
-## Renter equipment recovery (v0.1.5)
+## Renter equipment recovery (v0.2.0)
 
 If the renter equips a **held item** (e.g. Everstone or Destiny Knot) or a **cosmetic item** on a temporarily rented Pokémon, the addon attempts to capture it when the lease expires. The *owner's* original Pokémon and its original held/cosmetic items remain unchanged in the separate `originals` vault.
 

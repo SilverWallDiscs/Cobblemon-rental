@@ -10,7 +10,8 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.item.ItemStack;
 import java.io.IOException;
-import java.math.BigInteger;
+import java.math.BigDecimal;
+import net.fabricmc.loader.api.FabricLoader;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -19,7 +20,42 @@ public final class RentalEngine {
     private final MinecraftServer server;
     private final RentalRepository db;
     private final RentalConfig config;
-    private final CobbleDollarsEconomy money = new CobbleDollarsEconomy();
+    private final CobbleDollarsEconomy cobbleDollars = new CobbleDollarsEconomy();
+    private final Map<String, RentalEconomy> impactorEconomies = new HashMap<>();
+    private RentalEconomy provider(String type, String currency) throws Exception {
+        String id = type == null ? "cobbledollars" : type;
+        return switch (id) {
+            case "cobbledollars" -> {
+                if (!FabricLoader.getInstance().isModLoaded("cobbledollars"))
+                    throw new IllegalStateException("CobbleDollars is not installed");
+                yield cobbleDollars;
+            }
+            case "impactor" -> {
+                if (!FabricLoader.getInstance().isModLoaded("impactor"))
+                    throw new IllegalStateException("Impactor is not installed");
+                yield impactorEconomies.computeIfAbsent(currency == null ? "primary" : currency, ImpactorEconomy::new);
+            }
+            default -> throw new IllegalStateException("Unknown economy backend: " + id);
+        };
+    }
+    private RentalEconomy selectedProvider() throws Exception { return provider(config.economyProvider, config.impactorCurrency); }
+    private RentalEconomy provider(RentalListing listing) throws Exception {
+        return provider(listing.economyProvider, listing.economyCurrency);
+    }
+    public String selectedCurrencySymbol() { return config.currencySymbol; }
+    public static String symbol(RentalListing r) { return r.currencySymbol == null ? "$" : r.currencySymbol; }
+    public void validateEconomy() throws Exception { selectedProvider().validate(); }
+    private static String formatMoney(String symbol, long amount) {
+        return symbol + String.format(Locale.US, "%,d", amount);
+    }
+    public void prefetchEconomy(UUID user) {
+        try {
+            selectedProvider().prefetch(user);
+            // Existing contracts can use a different backend than the current default.
+            for (RentalListing r : db.all())
+                if (user.equals(r.ownerId) || user.equals(r.renterId)) provider(r).prefetch(user);
+        } catch (Exception e) { PokemonRentalMod.LOGGER.warn("Economy prefetch failed for {}: {}", user, e.toString()); }
+    }
     private final Set<String> warned = new HashSet<>();
 
     public RentalEngine(MinecraftServer server, RentalRepository db, RentalConfig config) { this.server = server; this.db = db; this.config = config; }
@@ -46,7 +82,7 @@ public final class RentalEngine {
         return true;
     }
 
-    private static String money(long amount) { return "$" + String.format(Locale.US, "%,d", amount); }
+
     private void msg(ServerPlayer player, String text) { player.sendSystemMessage(Component.literal("§b[Pokémon Rental] §f" + text)); }
     private void warn(String key, Exception e) { if (warned.add(key)) PokemonRentalMod.LOGGER.error("Rental requires admin review: " + key, e); }
 
@@ -57,10 +93,22 @@ public final class RentalEngine {
         if (db.all().stream().anyMatch(r -> r.originalPokemonId.equals(original.getUuid()) && !r.originalReturned)) {
             msg(owner, "That Pokémon is already in rental escrow."); return false;
         }
+        RentalEconomy economy;
+        String lockedCurrency;
+        try {
+            economy = selectedProvider();
+            economy.validate();
+            lockedCurrency = economy.currencyKey();
+        } catch (Exception e) {
+            msg(owner, "Selected economy is unavailable: " + e.getMessage());
+            return false;
+        }
         RentalListing listing = new RentalListing();
         listing.id = UUID.randomUUID().toString(); listing.ownerId = owner.getUUID(); listing.originalPokemonId = original.getUuid();
         listing.species = original.getSpecies().getName(); listing.level = original.getLevel(); listing.price = price;
         listing.minutes = minutes; listing.state = RentalListing.State.PREPARING;
+        listing.economyProvider = economy.id(); listing.economyCurrency = lockedCurrency;
+        listing.currencySymbol = config.currencySymbol;
         try {
             original.recall();
             db.storeOriginal(listing, original, registry()); // durable FIRST
@@ -69,7 +117,7 @@ public final class RentalEngine {
             if (!store.remove(original)) { msg(owner, "Couldn't remove the Pokémon from its original slot. Escrow is pending reconciliation."); return false; }
             listing.state = RentalListing.State.LISTED;
             db.save();
-            msg(owner, "Listed " + listing.species + " for " + money(price) + " / " + minutes + " minutes.");
+            msg(owner, "Listed " + listing.species + " for " + formatMoney(symbol(listing), price) + " / " + minutes + " minutes.");
             return true;
         } catch (Exception e) { warn("list:" + listing.id, e); msg(owner, "Listing paused for safety. Contact an administrator."); return false; }
     }
@@ -78,22 +126,26 @@ public final class RentalEngine {
         RentalListing r = db.find(id);
         if (r == null || !r.available() || r.owns(buyer.getUUID())) return false;
         if (!hasSpace(buyer.getUUID())) { msg(buyer, "Make room in your party or PC first."); return false; }
-        BigInteger before;
-        try { before = money.balance(buyer); }
-        catch (Exception e) { warn("economy-read", e); msg(buyer, "CobbleDollars API is unavailable; purchase cancelled."); return false; }
-        if (before.compareTo(BigInteger.valueOf(r.price)) < 0) { msg(buyer, "Not enough CobbleDollars."); return false; }
+        RentalEconomy economy;
+        BigDecimal before;
+        try { economy = provider(r); before = economy.balance(buyer); }
+        catch (ImpactorEconomy.EconomyLoadingException e) {
+            msg(buyer, "Impactor account is loading. Please click Rent again shortly."); return false;
+        }
+        catch (Exception e) { warn("economy-read:" + r.id, e); msg(buyer, "Listing economy is unavailable; purchase cancelled."); return false; }
+        if (before.compareTo(BigDecimal.valueOf(r.price)) < 0) { msg(buyer, "Not enough funds in " + economy.id() + "."); return false; }
         // The serialized PAYMENT_PENDING record forms the durable write-ahead journal.
         // A crash/exception after this point is NOT automatically retried: admin must reconcile money.
         r.state = RentalListing.State.PAYMENT_PENDING; r.renterId = buyer.getUUID();
         r.temporaryPokemonId = UUID.randomUUID(); r.debitBalanceBefore = before.toString();
         db.recordCopy(r.temporaryPokemonId);
         boolean paid;
-        try { paid = money.withdraw(buyer, r.price, before); }
+        try { paid = economy.withdraw(buyer, r.price, before); }
         catch (Exception e) { r.state = RentalListing.State.PAYMENT_REVIEW; db.save(); warn("charge:" + r.id, e); msg(buyer, "Payment needs admin review. Do not retry."); return false; }
         if (!paid) {
             // If balance changed, consider it uncertain and do not retry or grant a copy.
             try {
-                if (!money.balance(buyer).equals(before)) {
+                if (economy.balance(buyer).compareTo(before) != 0) {
                     r.state = RentalListing.State.PAYMENT_REVIEW; db.save();
                     msg(buyer, "Payment is under admin review."); return false;
                 }
@@ -105,11 +157,11 @@ public final class RentalEngine {
         r.startsAt = System.currentTimeMillis();
         r.expiresAt = r.startsAt + r.minutes * 60_000L;
         r.state = RentalListing.State.ACTIVE;
-        db.save(); // Credited only after verified CobbleDollars deduction.
+        db.save(); // Activated only after the selected backend verifies the deduction.
         if (!giveCopy(buyer, r)) msg(buyer, "Rent paid, but delivery is pending. Free a slot and run /pokerental again.");
         else msg(buyer, "Rental active! Expires " + new Date(r.expiresAt) + ". No held items are transferred.");
         ServerPlayer owner = server.getPlayerList().getPlayer(r.ownerId);
-        if (owner != null) msg(owner, r.species + " was rented for " + money(r.price) + ". Earnings are claimable.");
+        if (owner != null) msg(owner, r.species + " was rented for " + formatMoney(symbol(r), r.price) + " (" + economy.id() + "). Earnings are claimable.");
         return true;
     }
 
@@ -125,6 +177,7 @@ public final class RentalEngine {
         } catch (Exception e) { warn("delivery:" + r.id, e); return false; }
     }
     public void onLogin(ServerPlayer player) {
+        prefetchEconomy(player.getUUID());
         for (RentalListing r : db.all()) {
             if (r.state == RentalListing.State.ACTIVE && r.renterId.equals(player.getUUID()) && r.active()) giveCopy(player, r);
         }
@@ -283,13 +336,16 @@ public final class RentalEngine {
         if (r == null || !r.owns(owner.getUUID()) || r.payoutClaimed || r.payoutReview || r.price < 1 ||
                 r.renterId == null || (r.state != RentalListing.State.ACTIVE && r.state != RentalListing.State.EXPIRED && r.state != RentalListing.State.RETURNED)) return false;
         try {
-            BigInteger before = money.balance(owner);
-            r.payoutBalanceBefore = before.toString();
+            RentalEconomy economy = provider(r);
+            BigDecimal before = economy.balance(owner);
+            r.payoutBalanceBefore = before.toPlainString();
             // Persist payout intent; an interrupted transfer MUST NOT be auto-retried.
             r.payoutReview = true; db.save();
-            if (!money.deposit(owner, r.price, before)) { warn("payout:" + r.id, new Exception("Unconfirmed deposit")); msg(owner, "Payout needs admin review. Do not retry."); return false; }
+            if (!economy.deposit(owner, r.price, before)) { warn("payout:" + r.id, new Exception("Unconfirmed deposit")); msg(owner, "Payout needs admin review. Do not retry."); return false; }
             r.payoutClaimed = true; db.save(); // Keep payoutReview=true as a durable audit marker.
-            msg(owner, "Claimed " + money(r.price) + " for " + r.species + "."); return true;
+            msg(owner, "Claimed " + formatMoney(symbol(r), r.price) + " for " + r.species + "."); return true;
+        } catch (ImpactorEconomy.EconomyLoadingException e) {
+            msg(owner, "Impactor account is loading. Please try claiming again shortly."); return false;
         } catch (Exception e) { warn("payout:" + r.id, e); msg(owner, "Payout paused for admin review."); return false; }
     }
     public void claimAll(ServerPlayer owner) {

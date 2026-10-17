@@ -145,9 +145,9 @@ public final class RentalMenus {
                 }
             });
             menu.shiftAdjustEnabled = true;
-            menu.put(13, pokemonIcon(pokemon,"§e"+pokemon.getSpecies().getName(),price,minutes));
-            show(22,Items.GOLD_INGOT,"§6Price: §f"+money(price),
-                "§7Min: $1 | Max: " + money(engine.config().maxListingPrice),
+            menu.put(13, pokemonIcon(pokemon,"§e"+pokemon.getSpecies().getName(),price,minutes,engine.selectedCurrencySymbol()));
+            show(22,Items.GOLD_INGOT,"§6Price: §f"+money(engine.selectedCurrencySymbol(),price),
+                "§7Min: " + engine.selectedCurrencySymbol() + "1 | Max: " + money(engine.selectedCurrencySymbol(),engine.config().maxListingPrice),
                 "§7Left click adjusts by the shown amount", "§7Right click or Shift-click: 10x");
             show(31,Items.CLOCK,"§bDuration: §f"+duration(minutes),
                 "§7Min: " + duration(engine.config().minRentalMinutes) + " | Max: " + duration(engine.config().maxRentalMinutes),
@@ -157,7 +157,7 @@ public final class RentalMenus {
             long[] changes = {-1_000_000,-10_000,-100,-1,1,100,10_000,1_000_000};
             for (int i=0;i<priceSlots.length;i++) show(priceSlots[i],
                 changes[i]<0?Items.RED_STAINED_GLASS_PANE:Items.LIME_STAINED_GLASS_PANE,
-                (changes[i]<0?"§c-":"§a+")+money(Math.abs(changes[i])), "§7Right click or Shift-click: 10x");
+                (changes[i]<0?"§c-":"§a+")+money(engine.selectedCurrencySymbol(),Math.abs(changes[i])), "§7Right click or Shift-click: 10x");
             show(27,Items.RED_STAINED_GLASS_PANE,"§c-1 day");
             show(28,Items.RED_STAINED_GLASS_PANE,"§c-1 hour");
             show(29,Items.RED_STAINED_GLASS_PANE,"§c-15 minutes");
@@ -200,9 +200,9 @@ public final class RentalMenus {
                 if(clicked==49) { if(engine.rent(player,r.id)) rented(0); else market(0); }
             });
             menu.put(22,listingIcon(r));
-            show(31,Items.GOLD_INGOT,"§e"+money(r.price), "§7Duration: " + duration(r.minutes));
+            show(31,Items.GOLD_INGOT,"§e"+money(RentalEngine.symbol(r),r.price), "§7Duration: " + duration(r.minutes));
             show(45,Items.ARROW,"§7Back");
-            if(!r.owns(player.getUUID())) show(49,Items.EMERALD_BLOCK,"§aPay and rent", "§cThis charges " + money(r.price), "§7Temporary Pokémon will be recalled after expiry");
+            if(!r.owns(player.getUUID())) show(49,Items.EMERALD_BLOCK,"§aPay and rent", "§cThis charges " + money(RentalEngine.symbol(r),r.price), "§7Temporary Pokémon will be recalled after expiry");
             else show(49,Items.BARRIER,"§cYou cannot rent your own Pokémon");
             menu.sync();
         }
@@ -232,7 +232,7 @@ public final class RentalMenus {
             show(31,Items.CLOCK,"§bStatus: " + r.state, "§7Time left: " + readable(engine.remaining(r)),
                 "§7Original returned: "+r.originalReturned);
             show(45,Items.ARROW,"§7Back");
-            show(48,Items.GOLD_INGOT,r.payoutClaimed ? "§7Earnings already claimed" : "§6Claim "+money(r.price), "§7Available after a successful purchase");
+            show(48,Items.GOLD_INGOT,r.payoutClaimed ? "§7Earnings already claimed" : "§6Claim "+money(RentalEngine.symbol(r),r.price), "§7Available after a successful purchase");
             if(r.state==RentalListing.State.LISTED) show(50,Items.CHEST,"§aCancel listing & return original");
             else if(r.state==RentalListing.State.EXPIRED) show(50,Items.CHEST,"§aClaim your original Pokémon");
             else show(50,Items.BARRIER,"§7Original is locked until rental expires");
@@ -302,13 +302,13 @@ public final class RentalMenus {
         ItemStack listingIcon(RentalListing r) {
             try {
                 Pokemon source = engine.database().original(r,player.registryAccess());
-                return pokemonIcon(source,"§b"+source.getSpecies().getName()+" §7(Lv."+r.level+")",r.price,r.minutes,
+                return pokemonIcon(source,"§b"+source.getSpecies().getName()+" §7(Lv."+r.level+")",r.price,r.minutes,RentalEngine.symbol(r),
                     "§7Status: " + r.state,"§7Time left: " + readable(engine.remaining(r)),
                     "§7Owner: " + (r.ownerId.equals(player.getUUID())?"You":r.ownerId.toString()));
             } catch(Exception e) { return icon(Items.BARRIER,"§cEscrow unavailable", "§7Listing #"+r.id); }
         }
     }
-    private static String money(long amount) { return "$" + String.format(Locale.US,"%,d", amount); }
+    private static String money(String symbol,long amount) { return symbol + String.format(Locale.US,"%,d", amount); }
     private static String duration(long minutes) {
         if (minutes <= 0) return "0m";
         long years = minutes / 525_600; minutes %= 525_600;
@@ -327,7 +327,7 @@ public final class RentalMenus {
         if(lines.length>0) stack.set(DataComponents.LORE,new ItemLore(Arrays.stream(lines).<Component>map(Component::literal).toList()));
         return stack;
     }
-    private static ItemStack pokemonIcon(Pokemon pokemon, String display, long price, int minutes, String... extra) {
+    private static ItemStack pokemonIcon(Pokemon pokemon, String display, long price, int minutes, String symbol, String... extra) {
         ItemStack stack = PokemonItem.from(pokemon);
         stack.set(DataComponents.CUSTOM_NAME,Component.literal(display));
         List<Component> lore = new ArrayList<>();
@@ -340,7 +340,7 @@ public final class RentalMenus {
         lore.add(Component.literal("§f"+stats(pokemon,true)));
         lore.add(Component.literal("§bEVs §7(HP/ATK/DEF/SPA/SPD/SPE)"));
         lore.add(Component.literal("§f"+stats(pokemon,false)));
-        lore.add(Component.literal("§6Price: §f"+money(price)));
+        lore.add(Component.literal("§6Price: §f"+money(symbol,price)));
         lore.add(Component.literal("§bRental time: §f"+duration(minutes)));
         for(String line:extra) lore.add(Component.literal(line));
         stack.set(DataComponents.LORE,new ItemLore(lore)); return stack;
