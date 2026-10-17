@@ -19,6 +19,7 @@ dependencies {
     modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
     modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
     compileOnly "org.jetbrains.kotlin:kotlin-stdlib:2.0.21" // Cobblemon Kotlin collection signatures (Java compile)
+    compileOnly "net.kyori:adventure-api:4.17.0" // Impactor API currency keys, compile-only
     modImplementation 'maven.modrinth:MdwFAVRL:kF7CvxTo' // Cobblemon 1.7.3 Fabric
     modLocalRuntime 'maven.modrinth:s7N7AsqL:NQdxKsW7' // Optional CobbleDollars 2.0 Beta 6.1
     modCompileOnly 'maven.modrinth:LdBYVaPS:KwNU9SQW' // Optional Impactor 5.3.5 Fabric 1.21.1 API
