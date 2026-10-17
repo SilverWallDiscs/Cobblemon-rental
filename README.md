@@ -1,4 +1,4 @@
-# Pokémon Rental (Fabric 1.21.1) — source prototype v0.2.0
+# Pokémon Rental (Fabric 1.21.1) — source prototype v0.2.1
 
 A **server-only** Cobblemon 1.7.3 Pokémon rental marketplace using **CobbleDollars 2.0 Beta 6.1** (if using CobbleDollars) **or Impactor 5.3.5 Fabric** (if using Impactor). Clients need their normal Cobblemon client but do not need this addon.
 
@@ -21,13 +21,17 @@ A **server-only** Cobblemon 1.7.3 Pokémon rental marketplace using **CobbleDoll
 
 - Java 21, Gradle 8.12.1 (install separately; Gradle Wrapper JAR is not bundled; CI installs Gradle 8.12.1).
 - Minecraft Fabric 1.21.1, Fabric API, Fabric Loader, Cobblemon **1.7.3**, and **either** CobbleDollars **2.0.0 Beta-6.1** **or** Impactor **5.3.5 for Fabric 1.21.1**, depending on your selected backend.
-- `gradle build` (source uses Fabric Loom and Mojang official mappings, no client code). Output should be `build/libs/pokemon-rental-0.2.0.jar` after a successful build.
+- `gradle build` (source uses Fabric Loom and Mojang official mappings, no client code). Output should be `build/libs/pokemon-rental-0.2.1.jar` after a successful build.
 - Install the compiled JAR only in the server's `mods/` folder.
 
 
 ## Server configuration (English)
 
-On the first startup, the mod creates **`config/pokemon-rental.json`** in the Minecraft server directory:
+On first startup, the mod creates **`config/cobblemon-rental.json`** in the server directory. The generated file contains **English `//` comments** above each setting. Cobblemon Rental reads these JSON-with-comments (JSONC) annotations; some strict JSON editors may report comments as non-standard. The example below omits comments for brevity.
+
+**Automatic migration from v0.2.0 and earlier:** If `config/pokemon-rental.json` exists and the new file is missing, the mod reads and validates the existing settings, then writes `config/cobblemon-rental.json` with the **same values** and the English explanations. It leaves the old file untouched as a backup. Once the new file exists, it always takes precedence: future edits to the old file will have no effect. If the old file is invalid, startup fails rather than replacing any settings silently.
+
+**Keep the comments when editing.** Restart the server after changes; existing listings and payouts keep their original currency backend.
 
 ```json
 {
@@ -56,7 +60,7 @@ On the first startup, the mod creates **`config/pokemon-rental.json`** in the Mi
 Impactor 5.3.5 for Fabric 1.21.1 can replace CobbleDollars as the payment backend. No client installation of Cobblemon Rental is required.
 
 1. Install [Impactor](https://modrinth.com/mod/impactor) on the server with Fabric API.
-2. Set `"economyProvider": "impactor"` in `config/pokemon-rental.json` and choose `"impactorCurrency": "primary"` or a registered namespaced currency key.
+2. Set `"economyProvider": "impactor"` in `config/cobblemon-rental.json` and choose `"impactorCurrency": "primary"` or a registered namespaced currency key.
 3. Restart the server. **Impactor and CobbleDollars are alternatives; do not change currencies for active listings.**
 4. The first Impactor purchase or payout may show **“Account is loading, try again shortly”** while asynchronous account storage is fetched. Retry the click; the mod never blocks the tick thread waiting for account IO.
 
@@ -105,7 +109,7 @@ Fabric Loom **1.10.5** requires **Gradle 8.12+**. An earlier source prototype in
 
 ### Initial private-server test checklist
 
-1. Start Fabric 1.21.1 with Fabric API, Cobblemon 1.7.3, CobbleDollars 2.0 Beta 6.1 and `pokemon-rental-0.2.0.jar` on the **server only**.
+1. Start Fabric 1.21.1 with Fabric API, Cobblemon 1.7.3, CobbleDollars 2.0 Beta 6.1 and `pokemon-rental-0.2.1.jar` on the **server only**.
 2. Back up world data. With two test accounts, list a Pokémon carrying a held item using `/pokerental 1`, verify the original disappears from the owner's party, and verify the marketplace GUI.
 3. Rent it with the second account; verify one CobbleDollars debit, a temporary Pokémon with no held item, and the owner payout claim. Test relogging and both party/PC placement.
 4. Test after the 2-hour minimum rental and server restarts; check that the rental copy is removed and the untouched original can be reclaimed with its original held item.
