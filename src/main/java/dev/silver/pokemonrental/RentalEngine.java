@@ -44,6 +44,15 @@ public final class RentalEngine {
     }
     public String selectedCurrencySymbol() { return config.currencySymbol; }
     public static String symbol(RentalListing r) { return r.currencySymbol == null ? "$" : r.currencySymbol; }
+    /** Display the currency name, not the backend name. Uses the immutable currency key of each listing. */
+    public static String currencyName(RentalListing r) {
+        if (r.economyProvider == null || "cobbledollars".equals(r.economyProvider)) return "CobbleDollars";
+        String key = r.economyCurrency;
+        if (key == null || key.isBlank()) return "Impactor currency";
+        int separator = key.lastIndexOf(':');
+        String name = key.substring(separator + 1);
+        return name.isBlank() ? key : name.replace('_', ' ').replace('-', ' ');
+    }
     public void validateEconomy() throws Exception { selectedProvider().validate(); }
     private static String formatMoney(String symbol, long amount) {
         return symbol + String.format(Locale.US, "%,d", amount);
@@ -117,7 +126,7 @@ public final class RentalEngine {
             if (!store.remove(original)) { msg(owner, "Couldn't remove the Pokémon from its original slot. Escrow is pending reconciliation."); return false; }
             listing.state = RentalListing.State.LISTED;
             db.save();
-            msg(owner, "Listed " + listing.species + " for " + formatMoney(symbol(listing), price) + " / " + minutes + " minutes.");
+            msg(owner, "Listed " + listing.species + " for " + formatMoney(symbol(listing), price) + " " + currencyName(listing) + " / " + minutes + " minutes.");
             return true;
         } catch (Exception e) { warn("list:" + listing.id, e); msg(owner, "Listing paused for safety. Contact an administrator."); return false; }
     }
@@ -133,7 +142,7 @@ public final class RentalEngine {
             msg(buyer, "Impactor account is loading. Please click Rent again shortly."); return false;
         }
         catch (Exception e) { warn("economy-read:" + r.id, e); msg(buyer, "Listing economy is unavailable; purchase cancelled."); return false; }
-        if (before.compareTo(BigDecimal.valueOf(r.price)) < 0) { msg(buyer, "Not enough funds in " + economy.id() + "."); return false; }
+        if (before.compareTo(BigDecimal.valueOf(r.price)) < 0) { msg(buyer, "Not enough funds in " + currencyName(r) + "."); return false; }
         // The serialized PAYMENT_PENDING record forms the durable write-ahead journal.
         // A crash/exception after this point is NOT automatically retried: admin must reconcile money.
         r.state = RentalListing.State.PAYMENT_PENDING; r.renterId = buyer.getUUID();
@@ -161,7 +170,7 @@ public final class RentalEngine {
         if (!giveCopy(buyer, r)) msg(buyer, "Rent paid, but delivery is pending. Free a slot and run /pokerental again.");
         else msg(buyer, "Rental active! Expires " + new Date(r.expiresAt) + ". No held items are transferred.");
         ServerPlayer owner = server.getPlayerList().getPlayer(r.ownerId);
-        if (owner != null) msg(owner, r.species + " was rented for " + formatMoney(symbol(r), r.price) + " (" + economy.id() + "). Earnings are claimable.");
+        if (owner != null) msg(owner, r.species + " was rented for " + formatMoney(symbol(r), r.price) + " " + currencyName(r) + ". Earnings are claimable.");
         return true;
     }
 
@@ -343,7 +352,7 @@ public final class RentalEngine {
             r.payoutReview = true; db.save();
             if (!economy.deposit(owner, r.price, before)) { warn("payout:" + r.id, new Exception("Unconfirmed deposit")); msg(owner, "Payout needs admin review. Do not retry."); return false; }
             r.payoutClaimed = true; db.save(); // Keep payoutReview=true as a durable audit marker.
-            msg(owner, "Claimed " + formatMoney(symbol(r), r.price) + " for " + r.species + "."); return true;
+            msg(owner, "Claimed " + formatMoney(symbol(r), r.price) + " " + currencyName(r) + " for " + r.species + "."); return true;
         } catch (ImpactorEconomy.EconomyLoadingException e) {
             msg(owner, "Impactor account is loading. Please try claiming again shortly."); return false;
         } catch (Exception e) { warn("payout:" + r.id, e); msg(owner, "Payout paused for admin review."); return false; }

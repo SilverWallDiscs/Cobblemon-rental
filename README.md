@@ -1,4 +1,4 @@
-# Pokémon Rental (Fabric 1.21.1) — source prototype v0.2.1
+# Pokémon Rental (Fabric 1.21.1) — source prototype v0.2.2
 
 A **server-only** Cobblemon 1.7.3 Pokémon rental marketplace using **CobbleDollars 2.0 Beta 6.1** (if using CobbleDollars) **or Impactor 5.3.5 Fabric** (if using Impactor). Clients need their normal Cobblemon client but do not need this addon.
 
@@ -15,13 +15,14 @@ A **server-only** Cobblemon 1.7.3 Pokémon rental marketplace using **CobbleDoll
 - Records persist in `world/pokemon-rental/index.json` via temp-file + sync + atomic rename.
 - When a rental expires, attempt to remove the temporary UUID from the renter's party/PC (including offline data), scan online players, recall the Pokémon entity, discard expired temporary Pokémon entities on chunk load, and allow the owner to claim the untouched original.
 - Disabled click types in a *server-only chest menu*; no draggable GUI items / creative clone via those GUI controls. Tracks temporary Pokémon UUIDs permanently as a blocklist for re-listing.
+- Transaction messages use the **actual listing currency name**, rather than the economy backend name. For example, an Impactor currency stored as `impactor:dollars` appears as `dollars` in rent, insufficient-funds and payout messages. No economy balances or currencies are converted.
 - CobbleDollars balances through reflective BigInteger 2.x player interface, or Impactor 5.3.5 accounts/transactions with asynchronous account loading; payment and payout intents are written before money changes. If a crash leaves the payment ambiguous, the record moves (or remains) in a REVIEW/PENDING state for an administrator; it must not be automatically retried.
 
 ## Requirements / compile
 
 - Java 21, Gradle 8.12.1 (install separately; Gradle Wrapper JAR is not bundled; CI installs Gradle 8.12.1).
 - Minecraft Fabric 1.21.1, Fabric API, Fabric Loader, Cobblemon **1.7.3**, and **either** CobbleDollars **2.0.0 Beta-6.1** **or** Impactor **5.3.5 for Fabric 1.21.1**, depending on your selected backend.
-- `gradle build` (source uses Fabric Loom and Mojang official mappings, no client code). Output should be `build/libs/pokemon-rental-0.2.1.jar` after a successful build.
+- `gradle build` (source uses Fabric Loom and Mojang official mappings, no client code). Output should be `build/libs/pokemon-rental-0.2.2.jar` after a successful build.
 - Install the compiled JAR only in the server's `mods/` folder.
 
 
@@ -109,7 +110,7 @@ Fabric Loom **1.10.5** requires **Gradle 8.12+**. An earlier source prototype in
 
 ### Initial private-server test checklist
 
-1. Start Fabric 1.21.1 with Fabric API, Cobblemon 1.7.3, CobbleDollars 2.0 Beta 6.1 and `pokemon-rental-0.2.1.jar` on the **server only**.
+1. Start Fabric 1.21.1 with Fabric API, Cobblemon 1.7.3, CobbleDollars 2.0 Beta 6.1 and `pokemon-rental-0.2.2.jar` on the **server only**.
 2. Back up world data. With two test accounts, list a Pokémon carrying a held item using `/pokerental 1`, verify the original disappears from the owner's party, and verify the marketplace GUI.
 3. Rent it with the second account; verify one CobbleDollars debit, a temporary Pokémon with no held item, and the owner payout claim. Test relogging and both party/PC placement.
 4. Test after the 2-hour minimum rental and server restarts; check that the rental copy is removed and the untouched original can be reclaimed with its original held item.
